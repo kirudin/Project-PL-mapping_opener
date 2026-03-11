@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PL Mapping Viewer</title>
+    <link rel="stylesheet" href="/styles.css?v=20260310-ui27" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="panel">
+          <h1>PL Mapping Viewer</h1>
+          <p class="meta-line">Creator: Hwi Je Woo</p>
+          <p class="meta-line">Version: 0.1</p>
+          <p class="meta-line">Created: 2026-03-10 KST</p>
+          <label for="ui-theme">UI Theme</label>
+          <select id="ui-theme">
+            <option value="bright">Bright</option>
+            <option value="dark">Dark</option>
+            <option value="skyblue">Skyblue</option>
+            <option value="rosered">Rosered</option>
+            <option value="twilight">Twilight</option>
+          </select>
+          <p id="dataset-meta" class="muted"></p>
+          <p id="app-error" class="error-text" hidden></p>
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <h2>Image</h2>
+          </div>
+          <label for="image-mode">Mode</label>
+          <select id="image-mode">
+            <option value="sum">Range Sum</option>
+            <option value="mean">Range Mean</option>
+          </select>
+          <div class="range-grid">
+            <div>
+              <label for="range-start">Range Start (nm)</label>
+              <input id="range-start" type="number" step="0.01" value="0" />
+            </div>
+            <div>
+              <label for="range-end">Range End (nm)</label>
+              <input id="range-end" type="number" step="0.01" value="0" />
+            </div>
+          </div>
+          <p id="range-label" class="muted">Range: -</p>
+          <div class="range-grid">
+            <div>
+              <label for="grid-width">X Pixels</label>
+              <input id="grid-width" type="number" step="1" min="1" value="0" />
+            </div>
+            <div>
+              <label for="grid-height">Y Pixels</label>
+              <input id="grid-height" type="number" step="1" min="1" value="0" />
+            </div>
+          </div>
+          <p id="grid-hint" class="muted">Square maps are inferred automatically.</p>
+          <div class="range-grid">
+            <div>
+              <label for="scan-size-x">Scan Size X</label>
+              <input id="scan-size-x" type="number" step="0.01" value="0" />
+            </div>
+            <div>
+              <label for="scan-size-y">Scan Size Y</label>
+              <input id="scan-size-y" type="number" step="0.01" value="0" />
+            </div>
+          </div>
+          <label for="scan-unit">Scan Unit</label>
+          <select id="scan-unit">
+            <option value="um">um</option>
+            <option value="nm">nm</option>
+            <option value="mm">mm</option>
+          </select>
+          <label for="image-low">Color Min</label>
+          <input id="image-low" type="range" min="0" max="95" value="0" />
+          <label for="image-high">Color Max</label>
+          <input id="image-high" type="range" min="5" max="100" value="100" />
+          <p id="image-range-label" class="muted">0% - 100%</p>
+          <div class="range-grid">
+            <div>
+              <label for="image-low-value">Actual Min</label>
+              <input id="image-low-value" type="number" step="any" placeholder="auto" />
+            </div>
+            <div>
+              <label for="image-high-value">Actual Max</label>
+              <input id="image-high-value" type="number" step="any" placeholder="auto" />
+            </div>
+          </div>
+          <div class="section-head compact-section-head">
+            <h2>Colormap</h2>
+          </div>
+          <div class="color-control-grid">
+            <div class="color-control-card">
+              <label for="color-map">Image</label>
+              <select id="color-map">
+                <option value="turbo">Turbo</option>
+                <option value="inferno">Inferno</option>
+                <option value="plasma">Plasma</option>
+                <option value="magma">Magma</option>
+                <option value="viridis">Viridis</option>
+                <option value="cividis">Cividis</option>
+                <option value="gray">Gray</option>
+                <option value="cool">Cool</option>
+                <option value="jet">Jet</option>
+                <option value="coolwarm">Coolwarm</option>
+                <option value="rdbu">RdBu</option>
+                <option value="seismic">Seismic</option>
+                <option value="hot">Hot</option>
+                <option value="afmhot">AFM Hot</option>
+                <option value="spectral">Spectral</option>
+                <option value="cubehelix">Cubehelix</option>
+              </select>
+              <label class="toggle compact-toggle">
+                <input id="invert-colormap" type="checkbox" />
+                <span>Invert</span>
+              </label>
+            </div>
+            <div class="color-control-card">
+              <label for="spectrum-color-map">Graph</label>
+              <select id="spectrum-color-map">
+                <option value="turbo">Turbo</option>
+                <option value="inferno">Inferno</option>
+                <option value="plasma">Plasma</option>
+                <option value="magma">Magma</option>
+                <option value="viridis">Viridis</option>
+                <option value="cividis">Cividis</option>
+                <option value="gray">Gray</option>
+                <option value="cool">Cool</option>
+                <option value="jet">Jet</option>
+                <option value="coolwarm">Coolwarm</option>
+                <option value="rdbu">RdBu</option>
+                <option value="seismic">Seismic</option>
+                <option value="hot">Hot</option>
+                <option value="afmhot">AFM Hot</option>
+                <option value="spectral">Spectral</option>
+                <option value="cubehelix">Cubehelix</option>
+              </select>
+              <label class="toggle compact-toggle">
+                <input id="invert-spectrum-colormap" type="checkbox" />
+                <span>Invert</span>
+              </label>
+              <label for="spectrum-background">Background</label>
+              <select id="spectrum-background">
+                <option value="transparent">Transparent</option>
+                <option value="night">Night</option>
+                <option value="slate">Slate</option>
+                <option value="graphite">Graphite</option>
+                <option value="ocean">Ocean</option>
+                <option value="forest">Forest</option>
+                <option value="white">White</option>
+              </select>
+            </div>
+          </div>
+          <label for="color-scale">Color Scale</label>
+          <select id="color-scale">
+            <option value="linear">Linear</option>
+            <option value="sqrt">Sqrt</option>
+            <option value="log">Log</option>
+          </select>
+          <p class="muted">Mean spectrum에서 클릭하면 단일 파장, 드래그하면 범위를 선택합니다.</p>
+        </div>
+
+        <div class="panel compact-panel">
+          <div class="section-head">
+            <h2>File</h2>
+          </div>
+          <label for="pick-file-input">Choose Pickle File</label>
+          <input id="pick-file-input" type="file" accept=".pickle" />
+          <p id="browser-path" class="muted">No file selected.</p>
+          <div id="file-list" class="file-list empty">Choose a pickle file from Finder.</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="tab-bar">
+          <button id="tab-viewer" class="tab-button active" type="button">Viewer</button>
+          <button id="tab-multi" class="tab-button" type="button">Multi</button>
+        </section>
+
+        <section id="viewer-tab" class="tab-panel active">
+        <section class="panel hero compact-hero">
+          <div class="compact-hero-content">
+            <p class="eyebrow">Selected File</p>
+            <div class="compact-hero-main">
+              <h2 id="file-title">No file selected</h2>
+              <p id="file-subtitle" class="muted">Choose a PL mapping pickle file from the left.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <div class="stack-column">
+            <div class="panel image-panel">
+              <div class="plot-meta">
+                <strong id="image-title">PL Intensity Map</strong>
+                <span id="image-subtitle" class="muted">Mean spectrum에서 파장 또는 범위를 선택하세요.</span>
+              </div>
+              <div class="panel-actions image-actions">
+                <div id="image-toast" class="image-toast" hidden></div>
+                <button id="image-copy" type="button">Copy</button>
+                <button id="image-export-png" type="button">PNG</button>
+                <button id="image-export-csv" type="button">CSV</button>
+                <button id="send-to-multi" type="button">Send to Multi</button>
+                <button id="image-clear" type="button">Clear</button>
+              </div>
+              <div id="image-stage" class="image-stage">
+                <canvas id="image-canvas" width="960" height="560"></canvas>
+                <div id="marker-layer" class="marker-layer"></div>
+              </div>
+            </div>
+
+            <div class="panel mean-panel">
+              <div class="plot-meta">
+                <strong>Global Mean Spectrum</strong>
+                <div class="plot-meta-side">
+                  <span id="mean-hover" class="muted"></span>
+                  <span id="mean-subtitle" class="muted">Mean over all pixels.</span>
+                </div>
+              </div>
+              <div class="panel-actions">
+                <button id="mean-copy" type="button">Copy</button>
+                <button id="mean-export-png" type="button">PNG</button>
+                <button id="mean-export-csv" type="button">CSV</button>
+                <button id="reset-mean-axes" type="button">Reset Axes</button>
+              </div>
+              <canvas id="mean-canvas" width="960" height="260"></canvas>
+            </div>
+          </div>
+
+          <div class="panel clicked-panel">
+            <div class="plot-meta">
+              <strong>Clicked Pixel Spectra</strong>
+              <div class="plot-meta-side">
+                <span id="clicked-hover" class="muted"></span>
+                <span id="clicked-subtitle" class="muted">Click on the map to add spectra.</span>
+              </div>
+            </div>
+            <div class="clicked-toolbar">
+              <div class="trace-controls">
+                <label class="toggle">
+                  <input id="normalize-toggle" type="checkbox" />
+                  <span>Normalize clicked traces</span>
+                </label>
+                <label class="toggle">
+                  <input id="smooth-toggle" type="checkbox" />
+                  <span>Smooth</span>
+                </label>
+                <div class="trace-inline">
+                  <label for="smooth-window">Window</label>
+                  <input id="smooth-window" type="number" min="3" step="1" value="7" />
+                </div>
+                <div class="trace-inline">
+                  <label for="smooth-poly">Poly</label>
+                  <input id="smooth-poly" type="number" min="1" step="1" value="2" />
+                </div>
+                <div class="trace-inline">
+                  <label for="offset-range">Trace Offset</label>
+                  <input id="offset-range" type="range" min="0" max="100" value="0" step="1" />
+                  <p id="offset-value" class="muted">0.000x</p>
+                </div>
+              </div>
+              <div class="panel-actions">
+                <button id="clicked-copy" type="button">Copy</button>
+                <button id="clicked-export-png" type="button">PNG</button>
+                <button id="clicked-export-csv" type="button">CSV</button>
+                <button id="reset-clicked-axes" type="button">Reset Axes</button>
+                <button id="clear-button" type="button">Clear</button>
+              </div>
+            </div>
+            <div id="clicked-list" class="clicked-list"></div>
+            <canvas id="clicked-canvas" width="960" height="420"></canvas>
+          </div>
+
+        </section>
+        </section>
+
+        <section id="multi-tab" class="tab-panel">
+          <section class="panel hero compact-hero">
+            <div class="compact-hero-content">
+              <p class="eyebrow">Multi</p>
+              <div class="compact-hero-main">
+                <h2>Image Gallery</h2>
+                <p id="multi-subtitle" class="muted">Saved snapshots of the current image.</p>
+              </div>
+              <button id="clear-multi" type="button">Clear Gallery</button>
+            </div>
+          </section>
+          <section id="multi-gallery" class="multi-gallery"></section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js?v=20260310-ui27"></script>
+  </body>
+</html>
