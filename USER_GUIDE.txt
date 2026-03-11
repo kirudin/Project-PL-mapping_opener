@@ -1,0 +1,151 @@
+PL Mapping Viewer User Guide
+
+1. What this program does
+
+PL Mapping Viewer opens PL mapping .pickle files and lets you:
+- view a PL intensity image
+- inspect the global mean spectrum
+- click pixels and compare multiple spectra
+- select a single wavelength or a wavelength range to update the image
+- save images and spectra
+- collect images in the Multi tab
+
+
+2. Windows users
+
+If you received the built Windows package:
+- open the folder dist\PLMappingViewer
+- run PLMappingViewer.exe
+
+Important:
+- keep the full dist\PLMappingViewer folder together
+- do not move only the exe by itself
+
+
+3. First launch
+
+When the program starts:
+- your web browser opens automatically
+- the viewer runs locally on your computer
+- an internet connection is not needed for normal use after launch
+
+If the browser does not open automatically:
+- open your browser
+- go to http://127.0.0.1:8234
+
+
+4. Open a file
+
+To open a PL mapping file:
+- click Choose Pickle File
+- select a .pickle file
+
+Supported input:
+- pandas DataFrame pickle
+- index: wavelength values
+- columns: pixel spectra
+
+If the map is not square:
+- enter X Pixels and Y Pixels manually
+- X Pixels x Y Pixels must match the total pixel count
+
+
+5. Main workflow
+
+Image panel:
+- shows the current PL map
+- click the map to add a spectrum to Clicked Pixel Spectra
+- clicked points are numbered in order
+
+Global Mean Spectrum:
+- click a wavelength to generate a single-wavelength image
+- drag across a wavelength range to generate a range image
+- drag on the x-axis zoom band to zoom the spectrum axis
+
+Clicked Pixel Spectra:
+- compares the spectra from selected pixels
+- click or drag on this plot to update the image using the same wavelength or range logic
+- use Clear to remove all clicked spectra
+
+Multi tab:
+- use Send to Multi to store the current image
+- Multi works as an image gallery
+
+
+6. Main controls
+
+Image mode:
+- Single wavelength
+- Range Sum
+- Range Mean
+
+Colormap:
+- image colormap and graph colormap are separate
+- invert can be applied separately
+
+Color range:
+- adjust Color Min and Color Max
+- Actual Min and Actual Max update from the current image values
+
+Smooth:
+- Smooth applies to Clicked Pixel Spectra
+- set Window and Poly manually
+
+Trace controls:
+- Normalize clicked traces
+- Trace Offset
+
+
+7. Save and copy
+
+Image panel:
+- Copy
+- PNG
+- CSV
+- Send to Multi
+
+Spectrum panels:
+- Copy
+- PNG
+- CSV
+- Reset Axes
+
+Multi tab:
+- each saved image can be copied or exported again
+
+
+8. Session restore
+
+The viewer saves the recent session in the browser.
+When you refresh or reopen the viewer, it may restore:
+- last opened file
+- wavelength or range selection
+- colormap settings
+- clicked spectra
+- Multi gallery items
+
+Note:
+- this depends on the local browser storage and temporary uploaded file still being available
+
+
+9. If something does not work
+
+If the file opens but no image appears:
+- check X Pixels and Y Pixels
+- make sure they match the real map size
+
+If the viewer page opens but looks old:
+- refresh the browser with Shift + Reload
+
+If the exe opens but browser does not connect:
+- close the program
+- relaunch PLMappingViewer.exe
+- keep the full dist\PLMappingViewer folder together
+
+
+10. Version
+
+PL Mapping Viewer
+Creator: Hwi Je Woo
+Version: v0.1
+Created: 2026-03-10 KST

@@ -1,0 +1,59 @@
+PL Mapping Viewer User Guide
+
+1. Start the program
+
+Run:
+- PLMappingViewer.exe
+
+Keep the full folder together:
+- dist\PLMappingViewer
+
+
+2. Open a file
+
+- Click Choose Pickle File
+- Select your .pickle file
+
+If the data is not square:
+- enter X Pixels
+- enter Y Pixels
+- make sure X x Y matches the total pixel count
+
+
+3. Basic use
+
+- Click Global Mean Spectrum to choose one wavelength
+- Drag on Global Mean Spectrum to choose a wavelength range
+- Click the image to add spectra
+- Use Send to Multi to save the current image in the gallery
+
+
+4. Save results
+
+Image:
+- Copy
+- PNG
+- CSV
+
+Spectra:
+- Copy
+- PNG
+- CSV
+
+
+5. Troubleshooting
+
+If the browser does not open:
+- go to http://127.0.0.1:8234
+
+If the image does not appear:
+- check X Pixels and Y Pixels
+
+If the program does not start:
+- keep the full dist\PLMappingViewer folder together
+
+
+PL Mapping Viewer
+Creator: Hwi Je Woo
+Version: v0.1
+Created: 2026-03-10 KST

@@ -14,6 +14,7 @@ This folder is a standalone Windows setup package for `PL Mapping Viewer`.
 - `launch_windows.py`
 - `run_windows.bat`
 - `build_exe.bat`
+- `cmd_build.txt`
 - `VERSION.txt`
 
 ## Option 1: Run With Python
@@ -25,17 +26,21 @@ If Python 3 is already installed on Windows:
 3. The browser opens automatically
 4. Use `Choose Pickle File` to open your PL mapping file
 
-## Option 2: Build EXE For Distribution
+## Option 2: Build EXE (One Click)
 
 Double-click:
 
 - `build_exe.bat`
 
+Or run the same commands manually in CMD:
+
+- `cmd_build.txt`
+
 What it does:
 
-1. Checks whether required packages are installed
-2. Installs `pandas` and `PyInstaller` if needed
-3. Builds:
+1. Checks whether `pandas` and `PyInstaller` are installed
+2. Installs them if needed
+3. Builds the viewer server itself as the EXE:
 
 ```text
 dist\PLMappingViewer\PLMappingViewer.exe
@@ -43,14 +48,13 @@ dist\PLMappingViewer\PLMappingViewer.exe
 
 This EXE package is for Windows users who do not have Python installed.
 The target PC does not need Python.
-Only the build PC needs Python in order to create the EXE once.
+Only the build PC needs Python once to create the EXE.
 
 ## Important
 
 - The generated app is a `--onedir` build
 - Keep the whole `dist\PLMappingViewer` folder together
 - Do not move only the `.exe` file by itself
-- Distribute the full `dist\PLMappingViewer` folder to Windows users
 
 ## First Launch
 

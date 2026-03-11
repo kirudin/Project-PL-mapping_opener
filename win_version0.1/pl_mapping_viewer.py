@@ -8,8 +8,10 @@ import pickle
 import re
 import sys
 import tempfile
+import threading
 import urllib.parse
 import uuid
+import webbrowser
 from dataclasses import dataclass
 from functools import lru_cache
 from http import HTTPStatus
@@ -495,6 +497,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Standalone PL mapping viewer")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8234)
+    parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
     ensure_pandas_available()
@@ -505,6 +508,9 @@ def main() -> None:
         print(f"Dataset: {DATA_DIR}")
     else:
         print("Dataset: no bundled PL_mapping_opener directory found; use file upload/browser selection.")
+    if not args.no_browser:
+        url = f"http://{args.host}:{args.port}"
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -1,9 +1,0 @@
-REM PL Mapping Viewer offline install + build commands
-REM Run these in Windows CMD inside win_offline_build_v0.1
-
-python\python.exe -m pip install --no-index --find-links=.\wheels pandas pyinstaller
-
-python\python.exe -m PyInstaller --noconfirm --onedir --console --name PLMappingViewer --add-data "pl_mapping_static;pl_mapping_static" --add-data "pl_mapping_viewer.py;." launch_windows.py
-
-REM Output:
-REM dist\PLMappingViewer\PLMappingViewer.exe

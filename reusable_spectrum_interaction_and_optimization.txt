@@ -1,0 +1,487 @@
+Reusable Spectrum Interaction and Image Update Notes
+
+Project source:
+- /Users/hwijewoo/Desktop/Project-PL mapping_opener/pl_mapping_static/app.js
+
+Purpose:
+- Reuse the graph axis zoom logic
+- Reuse wavelength click / drag range selection logic
+- Reuse the optimized image update flow
+- Reuse the render throttling pattern for hover and drag
+
+
+1. Main idea
+
+This viewer separates 3 interaction types on a spectrum canvas:
+- axis-band drag: zoom x or y axis
+- plot-body click: select one wavelength
+- plot-body drag: select a wavelength range
+
+It also separates 2 render paths:
+- image update path: expensive, async, fetches a new image payload
+- plot redraw path: lightweight, local, uses requestAnimationFrame
+
+That split is the key optimization.
+
+
+2. Important state
+
+Example state structure:
+
+```js
+const state = {
+  selection: {
+    type: "point",
+    targetWavelength: 0,
+    startWavelength: 0,
+    endWavelength: 0,
+  },
+  axisZoomDrag: null,
+  meanDrag: null,
+  meanDragMoved: false,
+  clickedDrag: null,
+  clickedDragMoved: false,
+  meanView: null,
+  clickedView: null,
+  meanPlotGeometry: null,
+  clickedPlotGeometry: null,
+  meanHoverGuide: null,
+  hoverGuide: null,
+  plotRenderQueued: false,
+};
+```
+
+Why this matters:
+- `selection` is the only source of truth for current image wavelength or range
+- `meanDrag` and `clickedDrag` track whether the user is doing point vs range selection
+- `axisZoomDrag` tracks axis-only zooming
+- `meanView` and `clickedView` store zoomed axis ranges
+- hover guides are separate from selection
+
+
+3. Plot geometry contract
+
+Your plot draw function should return geometry that includes:
+- `padding`
+- `innerWidth`
+- `innerHeight`
+- `canvas`
+- `dataBounds`
+- `invX(px)` to convert canvas x back to wavelength
+- `invY(py)` to convert canvas y back to data value
+
+Minimal pattern:
+
+```js
+return {
+  canvas,
+  padding,
+  innerWidth,
+  innerHeight,
+  dataBounds: { xMin, xMax, yMin, yMax },
+  invX: (px) => xMin + ((px - padding.left) / innerWidth) * (xMax - xMin),
+  invY: (py) => yMin + ((padding.top + innerHeight - py) / innerHeight) * (yMax - yMin),
+};
+```
+
+This is required so click, drag, hover, and zoom all use the real plotted coordinates, even after zooming.
+
+
+4. Axis zoom hit test
+
+Use a dedicated band outside the plot body so zoom does not conflict with wavelength selection.
+
+Pattern used here:
+
+```js
+function axisZoomHit(event, geometry, target) {
+  if (!geometry) return null;
+  const rect = geometry.canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  const inXBand =
+    x >= geometry.padding.left &&
+    x <= geometry.padding.left + geometry.innerWidth &&
+    y >= geometry.padding.top + geometry.innerHeight - 10 &&
+    y <= geometry.padding.top + geometry.innerHeight + 34;
+
+  const inYBand =
+    x >= 0 &&
+    x <= geometry.padding.left &&
+    y >= geometry.padding.top &&
+    y <= geometry.padding.top + geometry.innerHeight;
+
+  if (inXBand) return { target, axis: "x", startPx: x, currentPx: x };
+  if (inYBand) return { target, axis: "y", startPx: y, currentPx: y };
+  return null;
+}
+```
+
+Why this is important:
+- user can drag in the plot body to select wavelength range
+- user can drag in the axis band to zoom
+- these behaviors do not fight each other
+
+
+5. Plot body hit test
+
+Only allow wavelength picking inside the real plot body.
+
+```js
+function plotBodyHit(event, geometry) {
+  if (!geometry) return false;
+  const rect = geometry.canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  return (
+    x >= geometry.padding.left &&
+    x <= geometry.padding.left + geometry.innerWidth &&
+    y >= geometry.padding.top &&
+    y <= geometry.padding.top + geometry.innerHeight
+  );
+}
+```
+
+
+6. Zoom view clamping
+
+Clamp zoomed ranges to the original data bounds.
+
+```js
+function clampView(view, bounds) {
+  return {
+    xMin: Math.max(bounds.xMin, Math.min(bounds.xMax, view.xMin)),
+    xMax: Math.max(bounds.xMin, Math.min(bounds.xMax, view.xMax)),
+    yMin: Math.max(bounds.yMin, Math.min(bounds.yMax, view.yMin)),
+    yMax: Math.max(bounds.yMin, Math.min(bounds.yMax, view.yMax)),
+  };
+}
+```
+
+
+7. Apply axis zoom
+
+This converts drag pixels into new axis ranges.
+
+```js
+function applyAxisZoom(drag, geometry, currentView) {
+  if (!drag || !geometry) return currentView;
+  const bounds = geometry.dataBounds;
+
+  if (drag.axis === "x") {
+    const left = Math.min(drag.startPx, drag.currentPx);
+    const right = Math.max(drag.startPx, drag.currentPx);
+    if (Math.abs(right - left) < 8) return currentView;
+    return clampView(
+      {
+        xMin: geometry.invX(left),
+        xMax: geometry.invX(right),
+        yMin: currentView?.yMin ?? bounds.yMin,
+        yMax: currentView?.yMax ?? bounds.yMax,
+      },
+      bounds
+    );
+  }
+
+  const top = Math.min(drag.startPx, drag.currentPx);
+  const bottom = Math.max(drag.startPx, drag.currentPx);
+  if (Math.abs(bottom - top) < 8) return currentView;
+  return clampView(
+    {
+      xMin: currentView?.xMin ?? bounds.xMin,
+      xMax: currentView?.xMax ?? bounds.xMax,
+      yMin: geometry.invY(bottom),
+      yMax: geometry.invY(top),
+    },
+    bounds
+  );
+}
+```
+
+
+8. Wavelength click and drag selection
+
+The important rule is:
+- `mousedown` stores the nearest wavelength point
+- `mousemove` decides whether drag has become a range selection
+- `mouseup` finalizes point or range
+
+Nearest point should use current plot geometry:
+
+```js
+const nearest = axisPositionFromCanvasEvent(event, canvas, axisValues, geometry);
+```
+
+Do not convert using the full array ratio after zoom. Use the zoomed geometry inverse transform.
+
+Point finalize pattern:
+
+```js
+state.selection.type = "point";
+state.selection.targetWavelength = nearest.value;
+state.selection.startWavelength = nearest.value;
+state.selection.endWavelength = nearest.value;
+await renderPreview();
+```
+
+Range finalize pattern:
+
+```js
+state.selection.type = "range";
+state.selection.startWavelength = Math.min(dragState.value, nearest.value);
+state.selection.endWavelength = Math.max(dragState.value, nearest.value);
+state.selection.targetWavelength = state.selection.startWavelength;
+await renderPreview();
+```
+
+Tiny drag threshold:
+
+```js
+const delta = Math.abs(nearest.index - dragState.index);
+if (!dragMoved && delta <= 1) {
+  // treat as point selection
+}
+```
+
+This avoids accidental range selection when the user just clicks.
+
+
+9. Shared mouseup logic
+
+One bug source was handling mean plot and clicked plot differently.
+The stable version uses a shared finalize path:
+
+```js
+const activeSource = state.meanDrag ? "mean" : state.clickedDrag ? "clicked" : null;
+const dragState = activeSource === "mean" ? state.meanDrag : state.clickedDrag;
+const dragMoved = activeSource === "mean" ? state.meanDragMoved : state.clickedDragMoved;
+const dragCanvas = activeSource === "mean" ? els.meanCanvas : els.clickedCanvas;
+const dragGeometry = activeSource === "mean" ? state.meanPlotGeometry : state.clickedPlotGeometry;
+```
+
+Then finalize point/range once.
+
+This keeps `Global Mean Spectrum` and `Clicked Pixel Spectra` behavior aligned.
+
+
+10. Hover optimization
+
+Do not call the expensive image update on hover.
+Hover should only:
+- update a hover guide value
+- schedule a lightweight local plot redraw
+
+Pattern:
+
+```js
+state.meanHoverGuide = nearest.value;
+schedulePlotRender();
+```
+
+Why:
+- hover happens every mousemove
+- image fetching on hover will make the app unusably slow
+
+
+11. requestAnimationFrame plot scheduling
+
+This is the main optimization for responsive interaction.
+
+```js
+function schedulePlotRender() {
+  if (state.plotRenderQueued) return;
+  state.plotRenderQueued = true;
+  window.requestAnimationFrame(() => {
+    state.plotRenderQueued = false;
+    renderMeanAndClickedPlots().catch((error) => {
+      console.warn("Failed to rerender plots", error);
+    });
+  });
+}
+```
+
+Use this for:
+- hover line movement
+- drag overlay updates
+- range shading updates
+- axis zoom overlay updates
+
+Do not use it for expensive async image fetches unless you also debounce or cache them.
+
+
+12. Expensive image update path
+
+The expensive path is only for finalized selection changes:
+- click finished
+- drag finished
+- direct control change
+
+Pattern:
+
+```js
+async function renderPreview() {
+  const payload = await fetchImagePayload(state.selectedPath);
+  // draw image canvas from payload
+}
+```
+
+Keep this separate from plot-only redraw.
+
+
+13. Image payload caching
+
+The viewer caches image requests by all parameters that define the image:
+
+```js
+const key = `${path}::${dims?.width || "auto"}::${dims?.height || "auto"}::${els.imageMode.value}::${state.selection.type}::${state.selection.targetWavelength}::${state.selection.startWavelength}::${state.selection.endWavelength}`;
+```
+
+Why this helps:
+- repeated redraws with the same wavelength/range do not refetch
+- control changes that do not affect the backend payload can stay local
+
+Rule:
+- include only parameters that truly change the server-generated image
+
+
+14. What should trigger full image rerender
+
+Good triggers:
+- finalized wavelength click
+- finalized wavelength range drag
+- image mode change
+- explicit range input change
+- width/height pixel input change
+
+Bad triggers:
+- raw hover movement
+- every drag frame
+- every plot redraw
+
+
+15. Separation of image and plot rerender
+
+Recommended split:
+
+```js
+renderPreview();              // async, expensive
+schedulePlotRender();         // local, cheap
+renderClickedList();          // local, cheap, only when clicked spectra changed
+```
+
+This project became much faster after removing repeated clicked-list rebuilds from every plot redraw.
+
+
+16. Current image guide on spectra
+
+To show what image is currently active:
+- if selection is point: draw one vertical guide line
+- if selection is range: draw a shaded band from start to end
+
+Pattern:
+
+```js
+const selectionGuideX = state.selection.type === "point" ? state.selection.targetWavelength : null;
+const rangeStart = state.selection.type === "range" ? state.selection.startWavelength : null;
+const rangeEnd = state.selection.type === "range" ? state.selection.endWavelength : null;
+```
+
+Then pass those to the plot draw function.
+
+
+17. Hover label that follows the vertical guide
+
+The project draws a wavelength label attached to the hover line.
+Useful options passed into drawPlot:
+
+```js
+{
+  hoverGuideX: state.meanHoverGuide,
+  selectionGuideX,
+  rangeStart,
+  rangeEnd,
+}
+```
+
+Inside drawing:
+- map wavelength to canvas x
+- draw a vertical line
+- draw a small label box near the top
+
+This gives immediate wavelength feedback without changing the selection.
+
+
+18. Recommended event structure
+
+Mean plot:
+
+```js
+canvas.addEventListener("mousedown", ...)
+canvas.addEventListener("mousemove", ...)
+canvas.addEventListener("mouseleave", ...)
+window.addEventListener("mouseup", ...)
+canvas.addEventListener("dblclick", ...)
+```
+
+Clicked plot:
+
+Use the same event pattern and same finalize logic.
+
+This was important because separate logic paths caused behavior drift between the two plots.
+
+
+19. What was optimized in this project
+
+Key optimizations that improved responsiveness:
+- separated hover redraw from image fetch
+- added requestAnimationFrame batching
+- cached image payload requests
+- stopped rebuilding clicked spectra UI on every plot frame
+- unified mean/clicked mouseup finalization
+- used axis band hit testing to avoid selection vs zoom conflicts
+- used geometry.invX(...) after zoom instead of raw array ratio
+
+
+20. Reuse checklist
+
+When copying this logic into another app:
+- keep one source of truth for current wavelength/range selection
+- store zoomed axis view separately from original bounds
+- use dedicated axis zoom bands
+- use requestAnimationFrame for hover redraw
+- only fetch new images after finalized selection
+- cache image payloads by the actual backend parameters
+- use the same finalize logic for all similar plots
+
+
+21. Functions worth copying from this project
+
+Look in:
+- /Users/hwijewoo/Desktop/Project-PL mapping_opener/pl_mapping_static/app.js
+
+Useful function names:
+- `axisZoomHit(...)`
+- `plotBodyHit(...)`
+- `clampView(...)`
+- `applyAxisZoom(...)`
+- `fetchImagePayload(...)`
+- `renderPreview(...)`
+- `schedulePlotRender(...)`
+- `renderMeanAndClickedPlots(...)`
+
+
+22. Practical warning
+
+If a plot supports both:
+- zoom by drag
+- range select by drag
+
+you must separate them by hit area.
+
+If not:
+- zoom drag becomes range select
+- range select becomes zoom
+- behavior feels random to the user
+
+This was one of the main sources of bugs in this project.

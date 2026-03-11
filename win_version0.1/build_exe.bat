@@ -6,35 +6,47 @@ set WIN_PKG_VERSION=v0.1
 echo PL Mapping Viewer Windows Package %WIN_PKG_VERSION%
 echo.
 
-echo [1/3] Checking Python...
+echo.
+echo [1/2] Checking Python and required packages...
 where py >nul 2>nul
 if %errorlevel%==0 (
+  py -m pip show pandas >nul 2>nul
+  if %errorlevel% neq 0 (
+    echo pandas is not installed. Installing now...
+    py -m pip install pandas
+    if %errorlevel% neq 0 goto :install_failed
+  )
+  py -m pip show pyinstaller >nul 2>nul
+  if %errorlevel% neq 0 (
+    echo PyInstaller is not installed. Installing now...
+    py -m pip install pyinstaller
+    if %errorlevel% neq 0 goto :install_failed
+  )
   set PY_CMD=py
 ) else (
   where python >nul 2>nul
   if %errorlevel% neq 0 goto :python_missing
+  python -m pip show pandas >nul 2>nul
+  if %errorlevel% neq 0 (
+    echo pandas is not installed. Installing now...
+    python -m pip install pandas
+    if %errorlevel% neq 0 goto :install_failed
+  )
+  python -m pip show pyinstaller >nul 2>nul
+  if %errorlevel% neq 0 (
+    echo PyInstaller is not installed. Installing now...
+    python -m pip install pyinstaller
+    if %errorlevel% neq 0 goto :install_failed
+  )
   set PY_CMD=python
 )
 
 echo.
-echo [2/3] Checking required packages...
-%PY_CMD% -m pip show pandas >nul 2>nul
-if %errorlevel% neq 0 (
-  echo pandas is not installed. Installing now...
-  %PY_CMD% -m pip install pandas
-  if %errorlevel% neq 0 goto :install_failed
-)
-
-%PY_CMD% -m pip show pyinstaller >nul 2>nul
-if %errorlevel% neq 0 (
-  echo PyInstaller is not installed. Installing now...
-  %PY_CMD% -m pip install pyinstaller
-  if %errorlevel% neq 0 goto :install_failed
-)
-
-echo.
-echo [3/3] Building PLMappingViewer.exe...
-%PY_CMD% -m PyInstaller --noconfirm --onedir --console --name PLMappingViewer --add-data "pl_mapping_static;pl_mapping_static" --add-data "pl_mapping_viewer.py;." launch_windows.py
+echo [2/2] Building PLMappingViewer.exe...
+if exist build rmdir /s /q build
+if exist dist rmdir /s /q dist
+if exist PLMappingViewer.spec del /f /q PLMappingViewer.spec
+%PY_CMD% -m PyInstaller --noconfirm --onedir --console --name PLMappingViewer --collect-all pandas --collect-all numpy --exclude-module matplotlib --exclude-module scipy --exclude-module PIL --add-data "pl_mapping_static;pl_mapping_static" pl_mapping_viewer.py
 if %errorlevel% neq 0 goto :build_failed
 
 echo.

@@ -1,0 +1,20 @@
+REM PL Mapping Viewer Windows build commands
+REM Run these in Windows CMD inside win_version0.1
+REM First try the py launcher. If your PC does not have py, use the python lines instead.
+
+py -m pip install pandas pyinstaller
+if exist build rmdir /s /q build
+if exist dist rmdir /s /q dist
+if exist PLMappingViewer.spec del /f /q PLMappingViewer.spec
+py -m PyInstaller --noconfirm --onedir --console --name PLMappingViewer --collect-all pandas --collect-all numpy --exclude-module matplotlib --exclude-module scipy --exclude-module PIL --add-data "pl_mapping_static;pl_mapping_static" pl_mapping_viewer.py
+
+REM If "py" is not available, use these instead:
+python -m pip install pandas pyinstaller
+if exist build rmdir /s /q build
+if exist dist rmdir /s /q dist
+if exist PLMappingViewer.spec del /f /q PLMappingViewer.spec
+python -m PyInstaller --noconfirm --onedir --console --name PLMappingViewer --collect-all pandas --collect-all numpy --exclude-module matplotlib --exclude-module scipy --exclude-module PIL --add-data "pl_mapping_static;pl_mapping_static" pl_mapping_viewer.py
+
+REM Output:
+REM dist\PLMappingViewer\PLMappingViewer.exe
+REM Keep the full dist\PLMappingViewer folder together when distributing.
