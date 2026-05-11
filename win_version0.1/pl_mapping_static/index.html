@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PL Mapping Viewer</title>
-    <link rel="stylesheet" href="/styles.css?v=20260310-ui27" />
+    <link rel="stylesheet" href="/styles.css?v=20260507-import-modal3" />
   </head>
   <body>
     <div class="shell">
@@ -37,6 +37,20 @@
           </select>
           <div class="range-grid">
             <div>
+              <label for="image-tool">Image Tool</label>
+              <select id="image-tool">
+                <option value="point">Point</option>
+                <option value="line">Line</option>
+              </select>
+            </div>
+            <div>
+              <label for="line-thickness">Line Thickness</label>
+              <input id="line-thickness" type="number" min="1" step="1" value="1" />
+            </div>
+          </div>
+          <p id="image-tool-hint" class="muted">Point mode: click map to add spectra.</p>
+          <div class="range-grid">
+            <div>
               <label for="range-start">Range Start (nm)</label>
               <input id="range-start" type="number" step="0.01" value="0" />
             </div>
@@ -48,15 +62,15 @@
           <p id="range-label" class="muted">Range: -</p>
           <div class="range-grid">
             <div>
-              <label for="grid-width">X Pixels</label>
+              <label for="grid-width">Grid Width</label>
               <input id="grid-width" type="number" step="1" min="1" value="0" />
             </div>
             <div>
-              <label for="grid-height">Y Pixels</label>
+              <label for="grid-height">Grid Height</label>
               <input id="grid-height" type="number" step="1" min="1" value="0" />
             </div>
           </div>
-          <p id="grid-hint" class="muted">Square maps are inferred automatically.</p>
+          <p id="grid-hint" class="muted">Open a file first. We will suggest pixel dimensions before rendering.</p>
           <div class="range-grid">
             <div>
               <label for="scan-size-x">Scan Size X</label>
@@ -166,10 +180,68 @@
           <div class="section-head">
             <h2>File</h2>
           </div>
-          <label for="pick-file-input">Choose Pickle File</label>
-          <input id="pick-file-input" type="file" accept=".pickle" />
+          <button id="open-file-modal" type="button">Open Data File</button>
+          <input id="pick-file-input" type="file" hidden />
+          <label for="import-mode">Import Mode</label>
+          <select id="import-mode">
+            <option value="auto">Auto</option>
+            <option value="manual">Manual</option>
+          </select>
+          <div id="manual-import-settings" class="manual-import-settings" hidden>
+            <div class="range-grid">
+              <div>
+                <label for="manual-format">Format</label>
+                <select id="manual-format">
+                  <option value="index-columns">Index + Pixel Columns</option>
+                  <option value="xy-spectra">X/Y + Spectra Columns</option>
+                </select>
+              </div>
+              <div>
+                <label for="import-skip-rows">Skip Rows</label>
+                <input id="import-skip-rows" type="number" min="0" step="1" value="0" />
+              </div>
+            </div>
+            <div class="range-grid">
+              <div>
+                <label for="import-delimiter">Delimiter</label>
+                <select id="import-delimiter">
+                  <option value="auto">Auto</option>
+                  <option value="comma">Comma</option>
+                  <option value="tab">Tab</option>
+                  <option value="space">Space</option>
+                  <option value="semicolon">Semicolon</option>
+                </select>
+              </div>
+              <div>
+                <label for="import-data-start-column">Data Start Col</label>
+                <input id="import-data-start-column" type="number" min="0" step="1" value="1" />
+              </div>
+            </div>
+            <div id="manual-index-columns" class="range-grid">
+              <div>
+                <label for="import-index-column">Index Column</label>
+                <input id="import-index-column" type="number" min="0" step="1" value="0" />
+              </div>
+            </div>
+            <div id="manual-xy-columns" class="range-grid" hidden>
+              <div>
+                <label for="import-x-column">X Column</label>
+                <input id="import-x-column" type="number" min="0" step="1" value="0" />
+              </div>
+              <div>
+                <label for="import-y-column">Y Column</label>
+                <input id="import-y-column" type="number" min="0" step="1" value="1" />
+              </div>
+            </div>
+            <div class="panel-actions import-actions">
+              <button id="remember-import-rule" type="button">Remember Rule</button>
+              <button id="clear-import-rules" type="button">Clear Rules</button>
+            </div>
+            <p class="muted import-help">Auto가 실패하면 행 건너뛰기, 구분자, 컬럼 역할을 직접 지정하세요.</p>
+            <p id="import-learning-status" class="muted import-help"></p>
+          </div>
           <p id="browser-path" class="muted">No file selected.</p>
-          <div id="file-list" class="file-list empty">Choose a pickle file from Finder.</div>
+          <div id="file-list" class="file-list empty">Choose a data file from Finder.</div>
         </div>
       </aside>
 
@@ -185,7 +257,7 @@
             <p class="eyebrow">Selected File</p>
             <div class="compact-hero-main">
               <h2 id="file-title">No file selected</h2>
-              <p id="file-subtitle" class="muted">Choose a PL mapping pickle file from the left.</p>
+              <p id="file-subtitle" class="muted">Choose a PL mapping data file from the left.</p>
             </div>
           </div>
         </section>
@@ -292,6 +364,78 @@
       </main>
     </div>
 
-    <script src="/app.js?v=20260310-ui27"></script>
+    <div id="import-modal" class="modal-shell" hidden>
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Import Setup</p>
+            <h2 id="import-modal-title">Choose Pixel Dimensions</h2>
+          </div>
+          <button id="import-modal-close" class="ghost-button" type="button">Close</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-block">
+            <div class="modal-block-head">
+              <strong>Select File</strong>
+              <span class="muted">Choose a mapping file, then confirm the grid.</span>
+            </div>
+            <div class="modal-file-row">
+              <input id="modal-pick-file-input" type="file" />
+            </div>
+          </div>
+
+          <div class="modal-summary">
+            <strong id="import-modal-file">No file selected</strong>
+            <p id="import-modal-meta" class="muted">Choose a file to start the analysis.</p>
+          </div>
+
+          <div class="modal-block">
+            <div class="modal-block-head">
+              <strong>Suggested</strong>
+              <span id="import-suggested-reason" class="muted"></span>
+            </div>
+            <div class="suggestion-card">
+              <div>
+                <strong id="import-suggested-dims">-</strong>
+                <p id="import-suggested-copy" class="muted">No automatic suggestion yet.</p>
+              </div>
+              <button id="use-suggested-dims" type="button">Use Suggested</button>
+            </div>
+          </div>
+
+          <div class="modal-block">
+            <div class="modal-block-head">
+              <strong>Factor Candidates</strong>
+              <span class="muted">Choose a candidate or type your own.</span>
+            </div>
+            <div id="dimension-candidate-list" class="candidate-grid"></div>
+          </div>
+
+          <div class="modal-block">
+            <div class="modal-block-head">
+              <strong>Custom Dimensions</strong>
+              <span class="muted">Width × Height must match the pixel count.</span>
+            </div>
+            <div class="range-grid">
+              <div>
+                <label for="modal-grid-width">Width</label>
+                <input id="modal-grid-width" type="number" min="1" step="1" value="0" />
+              </div>
+              <div>
+                <label for="modal-grid-height">Height</label>
+                <input id="modal-grid-height" type="number" min="1" step="1" value="0" />
+              </div>
+            </div>
+            <p id="modal-grid-validation" class="muted">Select a suggestion or enter a valid width and height.</p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="import-modal-open" type="button">Apply and Open</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js?v=20260507-import-modal3"></script>
   </body>
 </html>

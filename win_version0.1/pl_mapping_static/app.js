@@ -1,5 +1,6 @@
 const state = {
   selectedFile: null,
+  fileAnalysis: null,
   selectedPath: null,
   gridWidth: null,
   gridHeight: null,
@@ -27,13 +28,18 @@ const state = {
   imageView: { zoom: 1, offsetX: 0, offsetY: 0 },
   imagePan: null,
   imagePanMoved: false,
+  lineDrag: null,
+  lineDragMoved: false,
   imageToastTimer: null,
   plotRenderScheduled: false,
   activeTab: "viewer",
   multiSnapshots: [],
+  importPresets: [],
+  currentFilePatternSignature: null,
+  importModalOpen: false,
 };
 
-const STORAGE_KEY = "pl-mapping-viewer-state-v1";
+const STORAGE_KEY = "pl-mapping-viewer-state-v2";
 
 const heatmapScratchCanvas = document.createElement("canvas");
 const heatmapScratchCtx = heatmapScratchCanvas.getContext("2d");
@@ -43,10 +49,28 @@ const els = {
   appError: document.getElementById("app-error"),
   uiTheme: document.getElementById("ui-theme"),
   browserPath: document.getElementById("browser-path"),
-  pickFileButton: document.getElementById("pick-file-button"),
+  openFileModal: document.getElementById("open-file-modal"),
   pickFileInput: document.getElementById("pick-file-input"),
+  modalPickFileInput: document.getElementById("modal-pick-file-input"),
+  importMode: document.getElementById("import-mode"),
+  manualImportSettings: document.getElementById("manual-import-settings"),
+  manualFormat: document.getElementById("manual-format"),
+  importSkipRows: document.getElementById("import-skip-rows"),
+  importDelimiter: document.getElementById("import-delimiter"),
+  importIndexColumn: document.getElementById("import-index-column"),
+  importXColumn: document.getElementById("import-x-column"),
+  importYColumn: document.getElementById("import-y-column"),
+  importDataStartColumn: document.getElementById("import-data-start-column"),
+  manualIndexColumns: document.getElementById("manual-index-columns"),
+  manualXyColumns: document.getElementById("manual-xy-columns"),
+  rememberImportRule: document.getElementById("remember-import-rule"),
+  clearImportRules: document.getElementById("clear-import-rules"),
+  importLearningStatus: document.getElementById("import-learning-status"),
   fileList: document.getElementById("file-list"),
   imageMode: document.getElementById("image-mode"),
+  imageTool: document.getElementById("image-tool"),
+  imageToolHint: document.getElementById("image-tool-hint"),
+  lineThickness: document.getElementById("line-thickness"),
   rangeStart: document.getElementById("range-start"),
   rangeEnd: document.getElementById("range-end"),
   rangeLabel: document.getElementById("range-label"),
@@ -109,6 +133,19 @@ const els = {
   clearMulti: document.getElementById("clear-multi"),
   multiGallery: document.getElementById("multi-gallery"),
   multiSubtitle: document.getElementById("multi-subtitle"),
+  importModal: document.getElementById("import-modal"),
+  importModalClose: document.getElementById("import-modal-close"),
+  importModalFile: document.getElementById("import-modal-file"),
+  importModalMeta: document.getElementById("import-modal-meta"),
+  importSuggestedReason: document.getElementById("import-suggested-reason"),
+  importSuggestedDims: document.getElementById("import-suggested-dims"),
+  importSuggestedCopy: document.getElementById("import-suggested-copy"),
+  useSuggestedDims: document.getElementById("use-suggested-dims"),
+  dimensionCandidateList: document.getElementById("dimension-candidate-list"),
+  modalGridWidth: document.getElementById("modal-grid-width"),
+  modalGridHeight: document.getElementById("modal-grid-height"),
+  modalGridValidation: document.getElementById("modal-grid-validation"),
+  importModalOpenButton: document.getElementById("import-modal-open"),
 };
 
 async function fetchJson(url, options = {}) {
@@ -138,6 +175,124 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function baseFileName(name, fallback = "pl-data") {
+  if (!name) return fallback;
+  return name.replace(/\.[^.]+$/u, "") || fallback;
+}
+
+function currentAxisUnit() {
+  return state.selectedFile?.wavelength_unit || state.currentPreview?.wavelength_unit || "nm";
+}
+
+function currentAxisLabel() {
+  return state.selectedFile?.wavelength_axis_label || "Wavelength";
+}
+
+function getImportSettings() {
+  return {
+    importMode: els.importMode.value || "auto",
+    manualFormat: els.manualFormat.value || "index-columns",
+    skipRows: els.importSkipRows.value || "0",
+    delimiter: els.importDelimiter.value || "auto",
+    indexColumn: els.importIndexColumn.value || "0",
+    xColumn: els.importXColumn.value || "0",
+    yColumn: els.importYColumn.value || "1",
+    dataStartColumn: els.importDataStartColumn.value || "1",
+  };
+}
+
+function applyImportSettings(settings = {}) {
+  els.importMode.value = settings.importMode || "auto";
+  els.manualFormat.value = settings.manualFormat || "index-columns";
+  els.importSkipRows.value = settings.skipRows ?? "0";
+  els.importDelimiter.value = settings.delimiter || "auto";
+  els.importIndexColumn.value = settings.indexColumn ?? "0";
+  els.importXColumn.value = settings.xColumn ?? "0";
+  els.importYColumn.value = settings.yColumn ?? "1";
+  els.importDataStartColumn.value = settings.dataStartColumn ?? "1";
+  updateImportUi();
+}
+
+function updateImportUi() {
+  const manual = els.importMode.value === "manual";
+  const xyMode = manual && els.manualFormat.value === "xy-spectra";
+  els.manualImportSettings.hidden = !manual;
+  els.manualIndexColumns.hidden = !manual || xyMode;
+  els.manualXyColumns.hidden = !manual || !xyMode;
+}
+
+function appendImportParams(params) {
+  const settings = getImportSettings();
+  params.set("import_mode", settings.importMode);
+  if (settings.importMode !== "manual") return params;
+  params.set("manual_format", settings.manualFormat);
+  params.set("skip_rows", settings.skipRows);
+  params.set("delimiter", settings.delimiter);
+  params.set("index_column", settings.indexColumn);
+  params.set("x_column", settings.xColumn);
+  params.set("y_column", settings.yColumn);
+  params.set("data_start_column", settings.dataStartColumn);
+  return params;
+}
+
+function setImportLearningStatus(message) {
+  if (!els.importLearningStatus) return;
+  els.importLearningStatus.textContent = message || "";
+}
+
+function normalizeSignatureLine(line) {
+  return line
+    .trim()
+    .toLowerCase()
+    .replace(/[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/g, "#")
+    .replace(/\s+/g, " ")
+    .slice(0, 120);
+}
+
+async function buildFilePatternSignature(file) {
+  const extension = (file.name.match(/\.[^.]+$/u)?.[0] || "").toLowerCase();
+  try {
+    const sample = await file.slice(0, 16384).text();
+    const lines = sample
+      .split(/\r?\n/u)
+      .map(normalizeSignatureLine)
+      .filter(Boolean)
+      .slice(0, 12);
+    if (lines.length) return `${extension}::${lines.join("|")}`;
+  } catch {
+    // ignore
+  }
+  return `${extension}::size:${Math.round(file.size / 1024)}`;
+}
+
+function findImportPreset(signature) {
+  if (!signature) return null;
+  return state.importPresets.find((preset) => preset.signature === signature) || null;
+}
+
+function rememberImportPreset(signature, fileName) {
+  if (!signature) return;
+  const preset = {
+    signature,
+    settings: getImportSettings(),
+    fileName: fileName || state.selectedFile?.name || "learned-format",
+    learnedAt: new Date().toISOString(),
+  };
+  state.importPresets = [preset, ...state.importPresets.filter((item) => item.signature !== signature)].slice(0, 40);
+  setImportLearningStatus(`Learned import rule from ${preset.fileName}.`);
+}
+
+async function applyLearnedImportPreset(file) {
+  state.currentFilePatternSignature = await buildFilePatternSignature(file);
+  const preset = findImportPreset(state.currentFilePatternSignature);
+  if (!preset) {
+    setImportLearningStatus("");
+    return;
+  }
+  applyImportSettings(preset.settings);
+  setImportLearningStatus(`Applied learned rule from ${preset.fileName}.`);
+}
+
 function readStoredState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -151,6 +306,8 @@ function writeStoredState() {
   const payload = {
     selectedPath: state.selectedPath,
     selectedFile: state.selectedFile,
+    importPresets: state.importPresets,
+    importSettings: getImportSettings(),
     selection: state.selection,
     gridWidth: state.gridWidth,
     gridHeight: state.gridHeight,
@@ -158,6 +315,8 @@ function writeStoredState() {
     scanSizeY: els.scanSizeY.value,
     scanUnit: els.scanUnit.value,
     imageMode: els.imageMode.value,
+    imageTool: els.imageTool.value,
+    lineThickness: els.lineThickness.value,
     imageLow: els.imageLow.value,
     imageHigh: els.imageHigh.value,
     uiTheme: els.uiTheme.value,
@@ -183,6 +342,22 @@ function writeStoredState() {
 
 function clearStoredState() {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+function sanitizeLineThickness() {
+  let value = Number(els.lineThickness.value);
+  if (!Number.isInteger(value) || value < 1) value = 1;
+  if (value > 25) value = 25;
+  els.lineThickness.value = String(value);
+  return value;
+}
+
+function updateImageToolHint() {
+  if (els.imageTool.value === "line") {
+    els.imageToolHint.textContent = `Line mode: drag on the map to append line spectra (${sanitizeLineThickness()} px avg).`;
+  } else {
+    els.imageToolHint.textContent = "Point mode: click map to add spectra.";
+  }
 }
 
 function applyTheme(theme) {
@@ -919,7 +1094,8 @@ function drawPlot(canvas, bundles, xLabel, options = {}) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const label = `${formatNumber(options.hoverGuideX, 2)} nm`;
+    const hoverUnit = options.xUnit || "nm";
+    const label = `${formatNumber(options.hoverGuideX, 2)} ${hoverUnit}`;
     ctx.font = '11px "Avenir Next", sans-serif';
     const labelWidth = Math.ceil(ctx.measureText(label).width) + 12;
     const labelX = Math.max(padding.left, Math.min(width - padding.right - labelWidth, guideX - labelWidth / 2));
@@ -1014,7 +1190,7 @@ function updateOffsetLabel() {
 
 function defaultSmoothWindow(length) {
   if (!Number.isFinite(length) || length < 3) return 3;
-  let windowSize = Math.round(length * 0.05);
+  let windowSize = Math.round(length * 0.005);
   if (windowSize < 3) windowSize = 3;
   if (windowSize > length) windowSize = length;
   return Math.max(3, windowSize);
@@ -1051,10 +1227,11 @@ function syncRangeInputs() {
 }
 
 function updateRangeLabel() {
+  const unit = currentAxisUnit();
   if (state.selection.type === "point") {
-    els.rangeLabel.textContent = `Point: ${formatNumber(state.selection.targetWavelength, 2)} nm`;
+    els.rangeLabel.textContent = `Point: ${formatNumber(state.selection.targetWavelength, 2)} ${unit}`;
   } else {
-    els.rangeLabel.textContent = `Range: ${formatNumber(state.selection.startWavelength, 2)} - ${formatNumber(state.selection.endWavelength, 2)} nm`;
+    els.rangeLabel.textContent = `Range: ${formatNumber(state.selection.startWavelength, 2)} - ${formatNumber(state.selection.endWavelength, 2)} ${unit}`;
   }
 }
 
@@ -1066,15 +1243,18 @@ function scanSizeText() {
 }
 
 function updateGridHint() {
-  if (!state.selectedFile) {
-    els.gridHint.textContent = "Square maps are inferred automatically.";
+  const meta = activeFileMeta();
+  if (!meta) {
+    els.gridHint.textContent = "Open a file first. We will suggest pixel dimensions before rendering.";
     return;
   }
-  if (state.selectedFile.requires_manual_dimensions) {
-    els.gridHint.textContent = `Manual input required. X * Y must equal ${state.selectedFile.pixel_count}. Wavelengths: ${state.selectedFile.slice_count}.`;
+  if (meta.requires_manual_dimensions) {
+    els.gridHint.textContent = `This file has ${meta.pixel_count} pixels. Choose Width × Height in the popup or edit it here.`;
     return;
   }
-  els.gridHint.textContent = `Square map inferred: ${state.selectedFile.width} x ${state.selectedFile.height}. Wavelengths: ${state.selectedFile.slice_count}.`;
+  const suggestedWidth = meta.suggested_width || meta.width;
+  const suggestedHeight = meta.suggested_height || meta.height;
+  els.gridHint.textContent = `Suggested shape: ${suggestedWidth} x ${suggestedHeight}. You can still override it manually.`;
 }
 
 function syncSmoothDefaults(force = false) {
@@ -1091,25 +1271,175 @@ function syncSmoothDefaults(force = false) {
 }
 
 function renderSelectedFileSummary() {
-  if (!state.selectedFile) {
+  const meta = activeFileMeta();
+  if (!meta) {
     els.browserPath.textContent = "No file selected.";
     els.fileList.className = "file-list empty";
-    els.fileList.textContent = "Choose a pickle file from Finder.";
+    els.fileList.textContent = "Choose a data file from Finder.";
     updateGridHint();
     return;
   }
   const dims = getGridDimensions();
-  const width = dims?.width || state.selectedFile.width;
-  const height = dims?.height || state.selectedFile.height;
-  els.browserPath.textContent = "File loaded.";
+  const width = dims?.width || meta.width || meta.suggested_width || meta.inferred_width || 0;
+  const height = dims?.height || meta.height || meta.suggested_height || meta.inferred_height || 0;
+  els.browserPath.textContent = state.selectedFile ? "File loaded." : "File analyzed. Confirm pixel dimensions.";
   els.fileList.className = "file-list";
   els.fileList.innerHTML = `
     <div class="file-item active">
-      <strong>Loaded dataset</strong>
-      <span>${width} x ${height} pixels • ${state.selectedFile.slice_count} wavelengths • ${formatBytes(state.selectedFile.size_bytes)}</span>
+      <strong>${meta.name || "Selected dataset"}</strong>
+      <span>${width} x ${height} pixels • ${meta.slice_count} slices • ${formatBytes(meta.size_bytes)}</span>
     </div>
   `;
   updateGridHint();
+}
+
+function closeImportModal() {
+  state.importModalOpen = false;
+  els.importModal.hidden = true;
+}
+
+function resetImportModalView() {
+  els.importModalFile.textContent = "No file selected";
+  els.importModalMeta.textContent = "Choose a file to start the analysis.";
+  els.importSuggestedReason.textContent = "";
+  els.importSuggestedDims.textContent = "-";
+  els.importSuggestedCopy.textContent = "No automatic suggestion yet.";
+  els.dimensionCandidateList.innerHTML = "";
+  setModalDimensions(0, 0);
+}
+
+function setModalDimensions(width, height) {
+  els.modalGridWidth.value = width > 0 ? String(width) : "0";
+  els.modalGridHeight.value = height > 0 ? String(height) : "0";
+  updateModalValidation();
+}
+
+function updateModalValidation() {
+  const analysis = state.fileAnalysis;
+  if (!analysis) {
+    els.modalGridValidation.textContent = "Open a file first.";
+    return false;
+  }
+  const width = Number(els.modalGridWidth.value);
+  const height = Number(els.modalGridHeight.value);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    els.modalGridValidation.textContent = `Enter positive integers. Pixel count must equal ${analysis.pixel_count}.`;
+    return false;
+  }
+  const product = width * height;
+  if (product !== analysis.pixel_count) {
+    els.modalGridValidation.textContent = `${width} × ${height} = ${product}. It must equal ${analysis.pixel_count}.`;
+    return false;
+  }
+  els.modalGridValidation.textContent = `${width} × ${height} confirmed.`;
+  return true;
+}
+
+function renderDimensionCandidates(analysis) {
+  els.dimensionCandidateList.innerHTML = "";
+  const candidates = Array.isArray(analysis.dimension_candidates) ? analysis.dimension_candidates : [];
+  candidates.forEach((candidate, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "candidate-chip";
+    button.textContent = `${candidate.width} × ${candidate.height}`;
+    button.addEventListener("click", () => {
+      setModalDimensions(candidate.width, candidate.height);
+      els.dimensionCandidateList.querySelectorAll(".candidate-chip").forEach((chip) => chip.classList.remove("active"));
+      button.classList.add("active");
+    });
+    if (Number(els.modalGridWidth.value) === Number(candidate.width) && Number(els.modalGridHeight.value) === Number(candidate.height)) {
+      button.classList.add("active");
+    }
+    els.dimensionCandidateList.appendChild(button);
+  });
+}
+
+function openImportModal(analysis) {
+  state.importModalOpen = true;
+  els.importModal.hidden = false;
+  if (!analysis) {
+    resetImportModalView();
+    return;
+  }
+  els.importModalFile.textContent = analysis.name || "Selected file";
+  const minWave = Number.isFinite(analysis.min_wavelength) ? formatNumber(analysis.min_wavelength, 2) : "-";
+  const maxWave = Number.isFinite(analysis.max_wavelength) ? formatNumber(analysis.max_wavelength, 2) : "-";
+  els.importModalMeta.textContent = `${analysis.pixel_count} pixels • ${analysis.slice_count} slices • ${minWave} - ${maxWave} ${analysis.wavelength_unit || ""}`.trim();
+  els.importSuggestedReason.textContent = suggestionReasonLabel(analysis.suggestion_reason);
+  if (analysis.suggested_width && analysis.suggested_height) {
+    els.importSuggestedDims.textContent = `${analysis.suggested_width} × ${analysis.suggested_height}`;
+    els.importSuggestedCopy.textContent = `We can suggest this from ${suggestionReasonLabel(analysis.suggestion_reason).toLowerCase()}.`;
+    setModalDimensions(analysis.suggested_width, analysis.suggested_height);
+  } else {
+    els.importSuggestedDims.textContent = "No clear suggestion";
+    els.importSuggestedCopy.textContent = "Choose a factor pair or type your own width and height.";
+    setModalDimensions(0, 0);
+  }
+  renderDimensionCandidates(analysis);
+  updateModalValidation();
+}
+
+async function confirmImportDimensionsAndRender() {
+  if (!state.fileAnalysis) return;
+  if (!updateModalValidation()) {
+    showError("Choose valid pixel dimensions before opening the file.");
+    return;
+  }
+  state.gridWidth = Number(els.modalGridWidth.value);
+  state.gridHeight = Number(els.modalGridHeight.value);
+  syncGridInputsFromState();
+  await refreshSelectedFileFromImportSettings(true);
+  closeImportModal();
+}
+
+function resetSelectionFromFile(file) {
+  const anchor = Number.isFinite(file?.min_wavelength) ? file.min_wavelength : 0;
+  state.selection = {
+    type: "point",
+    targetWavelength: anchor,
+    startWavelength: anchor,
+    endWavelength: anchor,
+  };
+}
+
+function clampSelectionToFile(file) {
+  if (!file) return;
+  const minWave = Number.isFinite(file.min_wavelength) ? file.min_wavelength : 0;
+  const maxWave = Number.isFinite(file.max_wavelength) ? file.max_wavelength : minWave;
+  const clamp = (value) => Math.max(minWave, Math.min(maxWave, Number.isFinite(value) ? value : minWave));
+  if (!Number.isFinite(state.selection.targetWavelength)) {
+    resetSelectionFromFile(file);
+    return;
+  }
+  state.selection.targetWavelength = clamp(state.selection.targetWavelength);
+  state.selection.startWavelength = clamp(state.selection.startWavelength);
+  state.selection.endWavelength = clamp(state.selection.endWavelength);
+  if (state.selection.type === "range" && state.selection.startWavelength > state.selection.endWavelength) {
+    [state.selection.startWavelength, state.selection.endWavelength] = [state.selection.endWavelength, state.selection.startWavelength];
+  }
+}
+
+async function refreshSelectedFileFromImportSettings(resetSelection = false, options = {}) {
+  if (!state.selectedPath) return;
+  const info = await fetchJson(buildFileInfoRequest(state.selectedPath, options));
+  state.selectedFile = info;
+  state.fileAnalysis = info;
+  const dims = getGridDimensions();
+  state.gridWidth = dims?.width ?? (info.requires_manual_dimensions ? null : info.width);
+  state.gridHeight = dims?.height ?? (info.requires_manual_dimensions ? null : info.height);
+  syncGridInputsFromState();
+  if (resetSelection) resetSelectionFromFile(info);
+  else clampSelectionToFile(info);
+  syncSmoothDefaults(true);
+  state.imageCache.clear();
+  state.traceCache.clear();
+  state.clickedTraces = [];
+  renderClickedList();
+  renderMarkers();
+  renderSelectedFileSummary();
+  syncRangeInputs();
+  await renderCurrentFile();
 }
 
 function currentImageSummary() {
@@ -1118,10 +1448,11 @@ function currentImageSummary() {
   const width = dims?.width || state.selectedFile.width;
   const height = dims?.height || state.selectedFile.height;
   const modeText = els.imageMode.value === "mean" ? "Range Mean" : "Range Sum";
+  const unit = currentAxisUnit();
   const selectionText =
     state.selection.type === "point"
-      ? `${formatNumber(state.selection.targetWavelength, 2)} nm`
-      : `${formatNumber(state.selection.startWavelength, 2)}-${formatNumber(state.selection.endWavelength, 2)} nm`;
+      ? `${formatNumber(state.selection.targetWavelength, 2)} ${unit}`
+      : `${formatNumber(state.selection.startWavelength, 2)}-${formatNumber(state.selection.endWavelength, 2)} ${unit}`;
   return {
     title: state.selectedFile.name,
     subtitle: `${width} x ${height} px • ${modeText} • ${selectionText}`,
@@ -1231,7 +1562,40 @@ function buildImageRequest(path) {
     params.set("grid_width", String(dims.width));
     params.set("grid_height", String(dims.height));
   }
+  appendImportParams(params);
   return `/api/pl-image?${params.toString()}`;
+}
+
+function buildFileInfoRequest(path, options = {}) {
+  const params = new URLSearchParams({ path });
+  const dims = options.includeGridDimensions === false ? null : getGridDimensions();
+  if (dims) {
+    params.set("grid_width", String(dims.width));
+    params.set("grid_height", String(dims.height));
+  }
+  appendImportParams(params);
+  return `/api/file-info?${params.toString()}`;
+}
+
+function buildFileAnalysisRequest(path) {
+  const params = new URLSearchParams({ path });
+  appendImportParams(params);
+  return `/api/file-analysis?${params.toString()}`;
+}
+
+async function fetchFileAnalysis(path) {
+  return fetchJson(buildFileAnalysisRequest(path));
+}
+
+function suggestionReasonLabel(reason) {
+  if (reason === "embedded-metadata") return "Embedded metadata";
+  if (reason === "perfect-square") return "Square-root guess";
+  if (reason === "factor-candidate") return "Closest factor pair";
+  return "Manual choice recommended";
+}
+
+function activeFileMeta() {
+  return state.selectedFile || state.fileAnalysis;
 }
 
 async function fetchImagePayload(path) {
@@ -1256,9 +1620,138 @@ async function loadTrace(path, x, y) {
     params.set("grid_width", String(dims.width));
     params.set("grid_height", String(dims.height));
   }
+  appendImportParams(params);
   const payload = await fetchJson(`/api/pl-trace?${params.toString()}`);
   state.traceCache.set(key, payload);
   return payload;
+}
+
+function getImportQueryParams() {
+  const params = new URLSearchParams();
+  const dims = getGridDimensions();
+  if (dims) {
+    params.set("grid_width", String(dims.width));
+    params.set("grid_height", String(dims.height));
+  }
+  appendImportParams(params);
+  return params;
+}
+
+function getLinePixels(start, end) {
+  let x0 = start.x;
+  let y0 = start.y;
+  const x1 = end.x;
+  const y1 = end.y;
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  const points = [];
+  while (true) {
+    points.push({ x: x0, y: y0 });
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x0 += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y0 += sy;
+    }
+  }
+  return points;
+}
+
+function sampleLineTraceItems(traces, maxCount = 96) {
+  if (traces.length <= maxCount) return traces.slice();
+  const sampled = [];
+  for (let index = 0; index < maxCount; index += 1) {
+    const sourceIndex = Math.round((index * (traces.length - 1)) / Math.max(1, maxCount - 1));
+    sampled.push(traces[sourceIndex]);
+  }
+  return sampled;
+}
+
+async function fetchSampledPlLineFallback(path, start, end, maxCount = 96) {
+  const points = sampleLineTraceItems(getLinePixels(start, end), maxCount);
+  const traces = [];
+  let xAxis = [];
+  let xUnit = currentAxisUnit();
+  let xLabel = currentAxisLabel();
+  for (const point of points) {
+    const payload = await loadTrace(path, point.x, point.y);
+    if (!payload?.x?.length || !payload?.trace?.length) continue;
+    if (!xAxis.length) {
+      xAxis = payload.x.slice();
+      xUnit = payload.x_unit || xUnit;
+      xLabel = payload.x_label || xLabel;
+    }
+    traces.push({
+      pixel_x: point.x,
+      pixel_y: point.y,
+      trace: payload.trace.slice(),
+      average_count: 1,
+    });
+  }
+  return {
+    x: xAxis,
+    x_unit: xUnit,
+    x_label: xLabel,
+    y_unit: "Intensity (a.u.)",
+    start_x: start.x,
+    start_y: start.y,
+    end_x: end.x,
+    end_y: end.y,
+    thickness: 1,
+    traces,
+    fallback: true,
+  };
+}
+
+async function getPlLineTracePayload(path, start, end, options = {}) {
+  const thickness = Math.max(1, Number.isFinite(Number(options.thickness)) ? Number(options.thickness) : 1);
+  const params = new URLSearchParams({
+    path,
+    x1: String(start.x),
+    y1: String(start.y),
+    x2: String(end.x),
+    y2: String(end.y),
+    thickness: String(thickness),
+  });
+  const shared = getImportQueryParams();
+  shared.forEach((value, key) => params.set(key, value));
+  try {
+    return await fetchJson(`/api/pl-line-trace?${params.toString()}`);
+  } catch (error) {
+    console.warn("Falling back to sampled per-pixel line extraction", error);
+    return fetchSampledPlLineFallback(path, start, end, 96);
+  }
+}
+
+function buildPlLineTraceItems(payload) {
+  const traces = sampleLineTraceItems(Array.isArray(payload?.traces) ? payload.traces : [], 96);
+  return traces.map((trace, index) => ({
+    label: `L${index + 1} (${trace.pixel_x}, ${trace.pixel_y})`,
+    pixelX: trace.pixel_x,
+    pixelY: trace.pixel_y,
+    x: payload.x.slice(),
+    y: trace.trace.slice(),
+  }));
+}
+
+async function appendPlLineTrace(path, start, end, thickness = 1) {
+  const payload = await getPlLineTracePayload(path, start, end, { thickness });
+  const items = buildPlLineTraceItems(payload);
+  if (!items.length) return;
+  for (const item of items) {
+    state.clickedTraces = state.clickedTraces.filter((entry) => entry.label !== item.label);
+    state.clickedTraces.push(item);
+  }
+  renderClickedList();
+  renderMarkers();
+  await renderMeanAndClickedPlots();
 }
 
 function getMapLayout(preview) {
@@ -1301,6 +1794,29 @@ function renderMarkers() {
     marker.style.top = `${layout.drawTop + ((trace.pixelY + 0.5) / preview.source_height) * layout.drawHeight}px`;
     els.markerLayer.appendChild(marker);
   });
+  if (state.lineDrag?.start && state.lineDrag?.current) {
+    const startX = layout.drawLeft + ((state.lineDrag.start.x + 0.5) / preview.source_width) * layout.drawWidth;
+    const startY = layout.drawTop + ((state.lineDrag.start.y + 0.5) / preview.source_height) * layout.drawHeight;
+    const endX = layout.drawLeft + ((state.lineDrag.current.x + 0.5) / preview.source_width) * layout.drawWidth;
+    const endY = layout.drawTop + ((state.lineDrag.current.y + 0.5) / preview.source_height) * layout.drawHeight;
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const length = Math.hypot(dx, dy);
+    const line = document.createElement("div");
+    line.className = "line-overlay";
+    line.style.left = `${startX}px`;
+    line.style.top = `${startY}px`;
+    line.style.width = `${Math.max(2, length)}px`;
+    line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+    els.markerLayer.appendChild(line);
+    for (const point of [state.lineDrag.start, state.lineDrag.current]) {
+      const handle = document.createElement("div");
+      handle.className = "line-handle";
+      handle.style.left = `${layout.drawLeft + ((point.x + 0.5) / preview.source_width) * layout.drawWidth}px`;
+      handle.style.top = `${layout.drawTop + ((point.y + 0.5) / preview.source_height) * layout.drawHeight}px`;
+      els.markerLayer.appendChild(handle);
+    }
+  }
 }
 
 async function renderPreview() {
@@ -1320,9 +1836,9 @@ async function renderPreview() {
     els.imageHighValue.value = String(Number(autoLimits.max.toFixed(6)));
     els.imageTitle.textContent = file.name;
     if (payload.selection === "range") {
-      els.imageSubtitle.textContent = `${payload.mode === "mean" ? "Range mean" : "Range sum"} • ${formatNumber(payload.range_start_wavelength, 2)} - ${formatNumber(payload.range_end_wavelength, 2)} nm`;
+      els.imageSubtitle.textContent = `${payload.mode === "mean" ? "Range mean" : "Range sum"} • ${formatNumber(payload.range_start_wavelength, 2)} - ${formatNumber(payload.range_end_wavelength, 2)} ${payload.wavelength_unit}`;
     } else {
-      els.imageSubtitle.textContent = `Single wavelength • ${formatNumber(payload.target_wavelength, 2)} nm`;
+      els.imageSubtitle.textContent = `Single ${payload.wavelength_axis_label.toLowerCase()} • ${formatNumber(payload.target_wavelength, 2)} ${payload.wavelength_unit}`;
     }
   renderHeatmapToCanvas(
     els.imageCanvas,
@@ -1388,6 +1904,7 @@ async function renderMeanAndClickedPlots() {
         hoverGuideX: state.meanHoverGuide,
         rangeStart,
         rangeEnd,
+        xUnit: meanPayload.x_unit,
         view: state.meanView,
         singleColor: meanLineColorForBackground(els.spectrumBackground.value),
         backgroundName: els.spectrumBackground.value,
@@ -1402,6 +1919,7 @@ async function renderMeanAndClickedPlots() {
       hoverGuideX: state.hoverGuide,
       rangeStart,
       rangeEnd,
+      xUnit: meanPayload.x_unit,
       view: state.clickedView,
       colorMapName: els.spectrumColorMap.value,
       invertColormap: els.invertSpectrumColormap.checked,
@@ -1421,7 +1939,7 @@ async function renderCurrentFile() {
   const file = getSelectedFile();
   if (!file) {
     els.fileTitle.textContent = "No file selected";
-    els.fileSubtitle.textContent = "Choose a PL mapping pickle file.";
+    els.fileSubtitle.textContent = "Choose a PL mapping data file.";
     drawEmptyCanvas(els.imageCanvas, "No map loaded.");
     drawEmptyCanvas(els.meanCanvas, "No spectrum loaded.");
     drawEmptyCanvas(els.clickedCanvas, "No clicked spectra.");
@@ -1572,7 +2090,8 @@ async function selectMeanPointFromEvent(event) {
 async function uploadPickedFile(file) {
   try {
     clearError();
-    const info = await fetchJson("/api/upload-pickle", {
+    await applyLearnedImportPreset(file);
+    const uploaded = await fetchJson("/api/upload-pickle", {
       method: "POST",
       headers: {
         "Content-Type": "application/octet-stream",
@@ -1580,25 +2099,34 @@ async function uploadPickedFile(file) {
       },
       body: file,
     });
-    state.selectedFile = info;
-    state.selectedPath = info.path;
-    state.gridWidth = info.requires_manual_dimensions ? null : info.width;
-    state.gridHeight = info.requires_manual_dimensions ? null : info.height;
+    state.selectedPath = uploaded.path;
+    state.fileAnalysis = null;
+    state.selectedFile = null;
     state.clickedTraces = [];
     state.hoverGuide = null;
+    state.meanHoverGuide = null;
     state.meanView = null;
     state.clickedView = null;
-    state.selection = {
-      type: "point",
-      targetWavelength: info.min_wavelength,
-      startWavelength: info.min_wavelength,
-      endWavelength: info.min_wavelength,
-    };
-    syncSmoothDefaults(true);
+    state.gridWidth = null;
+    state.gridHeight = null;
     syncGridInputsFromState();
+    try {
+      const analysis = await fetchFileAnalysis(state.selectedPath);
+    state.fileAnalysis = analysis;
     renderSelectedFileSummary();
-    syncRangeInputs();
-    await renderCurrentFile();
+    openImportModal(analysis);
+    } catch (error) {
+      if (els.importMode.value === "manual") {
+        applyImportSettings({ importMode: "auto" });
+        setImportLearningStatus("Learned rule failed for this file. Fell back to Auto.");
+        const analysis = await fetchFileAnalysis(state.selectedPath);
+        state.fileAnalysis = analysis;
+        renderSelectedFileSummary();
+        openImportModal(analysis);
+      } else {
+        throw error;
+      }
+    }
   } catch (error) {
     showError(`File open failed:\n${error}`);
     console.error(error);
@@ -1610,10 +2138,14 @@ async function restorePreviousSession() {
   if (!saved?.selectedPath) return;
   try {
     applyTheme(saved.uiTheme || "bright");
+    state.importPresets = Array.isArray(saved.importPresets) ? saved.importPresets : [];
+    applyImportSettings(saved.importSettings || {});
     els.scanSizeX.value = saved.scanSizeX ?? els.scanSizeX.value;
     els.scanSizeY.value = saved.scanSizeY ?? els.scanSizeY.value;
     els.scanUnit.value = saved.scanUnit ?? els.scanUnit.value;
     els.imageMode.value = saved.imageMode ?? els.imageMode.value;
+    els.imageTool.value = saved.imageTool ?? "point";
+    els.lineThickness.value = saved.lineThickness ?? "1";
     els.imageLow.value = saved.imageLow ?? els.imageLow.value;
     els.imageHigh.value = saved.imageHigh ?? els.imageHigh.value;
     els.colorMap.value = saved.colorMap ?? els.colorMap.value;
@@ -1642,20 +2174,23 @@ async function restorePreviousSession() {
     syncRangeInputs();
     updateImageRangeLabel();
     updateOffsetLabel();
-    const params = new URLSearchParams({ path: state.selectedPath });
-    if (state.gridWidth && state.gridHeight) {
-      params.set("grid_width", String(state.gridWidth));
-      params.set("grid_height", String(state.gridHeight));
-    }
+    updateImageToolHint();
     try {
-      state.selectedFile = await fetchJson(`/api/file-info?${params.toString()}`);
+      state.selectedFile = await fetchJson(buildFileInfoRequest(state.selectedPath));
+      state.fileAnalysis = state.selectedFile;
     } catch (error) {
       if (!state.selectedFile) throw error;
       showError(`Last file could not be reopened automatically:\n${error}`);
       return;
     }
+    if (!(state.gridWidth && state.gridHeight)) {
+      state.gridWidth = state.selectedFile.requires_manual_dimensions ? null : state.selectedFile.width;
+      state.gridHeight = state.selectedFile.requires_manual_dimensions ? null : state.selectedFile.height;
+    }
     syncSmoothDefaults(!saved.smoothWindow);
     state.selection = saved.selection || state.selection;
+    clampSelectionToFile(state.selectedFile);
+    syncGridInputsFromState();
     renderSelectedFileSummary();
     await renderCurrentFile();
     state.clickedTraces = [];
@@ -1674,17 +2209,82 @@ function bindEvents() {
     applyTheme(els.uiTheme.value);
     writeStoredState();
   });
-  if (els.pickFileButton) {
-    els.pickFileButton.addEventListener("click", () => {
-      els.pickFileInput.click();
+  const handleImportSettingsChange = async (resetSelection = true) => {
+    updateImportUi();
+    writeStoredState();
+    if (!state.selectedPath) return;
+    try {
+      const analysis = await fetchFileAnalysis(state.selectedPath);
+      state.fileAnalysis = analysis;
+      renderSelectedFileSummary();
+      const dims = getGridDimensions();
+      if (!dims || dims.width * dims.height !== analysis.pixel_count) {
+        openImportModal(analysis);
+        return;
+      }
+      await refreshSelectedFileFromImportSettings(resetSelection);
+      writeStoredState();
+    } catch (error) {
+      showError(`Import settings failed:\n${error}`);
+    }
+  };
+  els.importMode.addEventListener("change", async () => {
+    await handleImportSettingsChange(true);
+  });
+  els.manualFormat.addEventListener("change", async () => {
+    await handleImportSettingsChange(true);
+  });
+  for (const input of [els.importSkipRows, els.importDelimiter, els.importIndexColumn, els.importXColumn, els.importYColumn, els.importDataStartColumn]) {
+    input.addEventListener("change", async () => {
+      await handleImportSettingsChange(true);
+    });
+    input.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      await handleImportSettingsChange(true);
     });
   }
+  els.rememberImportRule.addEventListener("click", () => {
+    if (!state.currentFilePatternSignature) {
+      setImportLearningStatus("Open a file first to learn its format.");
+      return;
+    }
+    rememberImportPreset(state.currentFilePatternSignature, state.selectedFile?.name);
+    writeStoredState();
+  });
+  els.clearImportRules.addEventListener("click", () => {
+    state.importPresets = [];
+    setImportLearningStatus("Cleared learned import rules.");
+    writeStoredState();
+  });
+  els.openFileModal.addEventListener("click", () => {
+    openImportModal(state.fileAnalysis);
+  });
   els.pickFileInput.addEventListener("change", async (event) => {
     const [file] = event.target.files || [];
     if (!file) return;
     await uploadPickedFile(file);
     els.pickFileInput.value = "";
   });
+  els.modalPickFileInput.addEventListener("change", async (event) => {
+    const [file] = event.target.files || [];
+    if (!file) return;
+    openImportModal(null);
+    await uploadPickedFile(file);
+    els.modalPickFileInput.value = "";
+  });
+  els.importModalClose.addEventListener("click", () => closeImportModal());
+  els.useSuggestedDims.addEventListener("click", async () => {
+    if (!state.fileAnalysis?.suggested_width || !state.fileAnalysis?.suggested_height) return;
+    setModalDimensions(state.fileAnalysis.suggested_width, state.fileAnalysis.suggested_height);
+    await confirmImportDimensionsAndRender();
+  });
+  els.importModalOpenButton.addEventListener("click", async () => {
+    await confirmImportDimensionsAndRender();
+  });
+  for (const input of [els.modalGridWidth, els.modalGridHeight]) {
+    input.addEventListener("input", () => updateModalValidation());
+    input.addEventListener("change", () => updateModalValidation());
+  }
   els.tabViewer.addEventListener("click", () => {
     setActiveTab("viewer");
     writeStoredState();
@@ -1717,7 +2317,7 @@ function bindEvents() {
     writeStoredState();
   });
   els.imageExportPng.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-image";
+    const name = baseFileName(state.selectedFile?.name, "pl-image");
     if (!state.currentPreview) return;
     const exportCanvasEl = renderHeatmapToOffscreenCanvas(
       state.currentPreview,
@@ -1732,7 +2332,7 @@ function bindEvents() {
     exportCanvas(exportCanvasEl, `${name}-image`);
   });
   els.imageExportCsv.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-image";
+    const name = baseFileName(state.selectedFile?.name, "pl-image");
     if (!state.currentPreview) return;
     exportCsv(imagePreviewCsv(state.currentPreview), `${name}-image`);
   });
@@ -1762,7 +2362,7 @@ function bindEvents() {
     writeStoredState();
   });
   els.meanExportPng.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-mean-spectrum";
+    const name = baseFileName(state.selectedFile?.name, "pl-mean-spectrum");
     exportCanvas(els.meanCanvas, `${name}-mean-spectrum`);
   });
   els.meanExportCsv.addEventListener("click", async () => {
@@ -1771,7 +2371,7 @@ function bindEvents() {
     const payload = await loadTrace(file.path, 0, 0);
     exportCsv(
       tracesToCsv([{ label: "Global Mean", x: payload.x.slice(), y: payload.mean_trace.slice() }]),
-      `${file.name.replace(/\.pickle$/i, "")}-mean-spectrum`
+      `${baseFileName(file.name, "pl-mean-spectrum")}-mean-spectrum`
     );
   });
   els.meanCopy.addEventListener("click", async () => {
@@ -1782,7 +2382,7 @@ function bindEvents() {
     }
   });
   els.clickedExportPng.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-clicked-spectra";
+    const name = baseFileName(state.selectedFile?.name, "pl-clicked-spectra");
     exportCanvas(els.clickedCanvas, `${name}-clicked-spectra`);
   });
   els.clickedExportCsv.addEventListener("click", () => {
@@ -1790,7 +2390,7 @@ function bindEvents() {
     if (!file || !state.clickedTraces.length) return;
     exportCsv(
       tracesToCsv(buildClickedBundles()),
-      `${file.name.replace(/\.pickle$/i, "")}-clicked-spectra`
+      `${baseFileName(file.name, "pl-clicked-spectra")}-clicked-spectra`
     );
   });
   els.clickedCopy.addEventListener("click", async () => {
@@ -1808,6 +2408,15 @@ function bindEvents() {
   els.imageMode.addEventListener("change", async () => {
     state.imageCache.clear();
     await renderPreview();
+    writeStoredState();
+  });
+  els.imageTool.addEventListener("change", () => {
+    updateImageToolHint();
+    writeStoredState();
+  });
+  els.lineThickness.addEventListener("change", () => {
+    sanitizeLineThickness();
+    updateImageToolHint();
     writeStoredState();
   });
   els.rangeStart.addEventListener("change", async () => {
@@ -1832,7 +2441,11 @@ function bindEvents() {
       state.imageCache.clear();
       state.traceCache.clear();
       renderSelectedFileSummary();
-      await renderCurrentFile();
+      if (state.selectedPath) {
+        await refreshSelectedFileFromImportSettings(false);
+      } else {
+        await renderCurrentFile();
+      }
       writeStoredState();
     });
   }
@@ -1926,7 +2539,28 @@ function bindEvents() {
     await renderMeanAndClickedPlots();
     writeStoredState();
   });
+  els.imageCanvas.addEventListener("mousedown", (event) => {
+    if (els.imageTool.value !== "line") return;
+    const pixel = getPixelFromEvent(event);
+    if (!pixel) return;
+    state.lineDrag = { start: pixel, current: pixel };
+    state.lineDragMoved = false;
+    renderMarkers();
+  });
+  els.imageCanvas.addEventListener("mousemove", (event) => {
+    if (!state.lineDrag) return;
+    const pixel = getPixelFromEvent(event);
+    if (!pixel) return;
+    state.lineDrag.current = pixel;
+    if (pixel.x !== state.lineDrag.start.x || pixel.y !== state.lineDrag.start.y) state.lineDragMoved = true;
+    renderMarkers();
+  });
+  els.imageCanvas.addEventListener("mouseleave", () => {
+    if (!state.lineDrag) return;
+    renderMarkers();
+  });
   els.imageCanvas.addEventListener("click", async (event) => {
+    if (els.imageTool.value !== "point") return;
     try {
       const pixel = getPixelFromEvent(event);
       if (!pixel) return;
@@ -1960,7 +2594,7 @@ function bindEvents() {
     const nearest = axisPositionFromCanvasEvent(event, els.meanCanvas, axisValues, state.meanPlotGeometry);
     if (!nearest) return;
     state.meanHoverGuide = nearest.value;
-    els.meanHover.textContent = `Wavelength: ${formatNumber(nearest.value, 2)} nm`;
+    els.meanHover.textContent = `${currentAxisLabel()}: ${formatNumber(nearest.value, 2)} ${currentAxisUnit()}`;
     schedulePlotRender();
     if (!state.meanDrag) return;
     if (Math.abs(nearest.index - state.meanDrag.index) > 1) state.meanDragMoved = true;
@@ -1971,6 +2605,22 @@ function bindEvents() {
     schedulePlotRender();
   });
   window.addEventListener("mouseup", async (event) => {
+    if (state.lineDrag) {
+      const drag = state.lineDrag;
+      const endPixel = getPixelFromEvent(event) || drag.current || drag.start;
+      state.lineDrag = null;
+      renderMarkers();
+      if (els.imageTool.value === "line" && state.lineDragMoved && state.selectedPath) {
+        try {
+          await appendPlLineTrace(state.selectedPath, drag.start, endPixel, sanitizeLineThickness());
+          writeStoredState();
+        } catch (error) {
+          showError(`Line trace failed:\n${error}`);
+        }
+      }
+      state.lineDragMoved = false;
+      return;
+    }
     if (state.axisZoomDrag) {
       if (state.axisZoomDrag.target === "mean") {
         state.meanView = applyAxisZoom(state.axisZoomDrag, state.meanPlotGeometry, state.meanView);
@@ -2030,7 +2680,7 @@ function bindEvents() {
     const nearest = axisPositionFromCanvasEvent(event, els.clickedCanvas, axisValues, state.clickedPlotGeometry);
     if (!nearest) return;
     state.hoverGuide = nearest.value;
-    if (els.clickedHover) els.clickedHover.textContent = `Wavelength: ${formatNumber(nearest.value, 2)} nm`;
+    if (els.clickedHover) els.clickedHover.textContent = `${currentAxisLabel()}: ${formatNumber(nearest.value, 2)} ${currentAxisUnit()}`;
     if (state.clickedDrag) {
       if (Math.abs(nearest.index - state.clickedDrag.index) > 1) state.clickedDragMoved = true;
       state.selection.type = "range";
@@ -2087,7 +2737,11 @@ function bindEvents() {
 }
 
 function init() {
-  applyTheme("bright");
+  const saved = readStoredState();
+  state.importPresets = Array.isArray(saved?.importPresets) ? saved.importPresets : [];
+  applyTheme(saved?.uiTheme || "bright");
+  applyImportSettings(saved?.importSettings || {});
+  setImportLearningStatus("");
   els.datasetMeta.textContent = "";
   clearError();
   renderSelectedFileSummary();
@@ -2095,8 +2749,9 @@ function init() {
   setActiveTab("viewer");
   updateImageRangeLabel();
   updateOffsetLabel();
+  updateImageToolHint();
   bindEvents();
-  drawEmptyCanvas(els.imageCanvas, "Choose a pickle file.");
+  drawEmptyCanvas(els.imageCanvas, "Choose a data file.");
   drawEmptyCanvas(els.meanCanvas, "No spectrum loaded.");
   drawEmptyCanvas(els.clickedCanvas, "No clicked spectra.");
   syncGridInputsFromState();

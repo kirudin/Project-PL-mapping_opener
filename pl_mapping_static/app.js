@@ -1,5 +1,6 @@
 const state = {
   selectedFile: null,
+  fileAnalysis: null,
   selectedPath: null,
   gridWidth: null,
   gridHeight: null,
@@ -27,13 +28,27 @@ const state = {
   imageView: { zoom: 1, offsetX: 0, offsetY: 0 },
   imagePan: null,
   imagePanMoved: false,
+  lineDrag: null,
+  lineDragMoved: false,
   imageToastTimer: null,
   plotRenderScheduled: false,
   activeTab: "viewer",
   multiSnapshots: [],
+  importPresets: [],
+  currentFilePatternSignature: null,
+  importModalOpen: false,
+  clickedViewMode: "spectra",
+  clickedHeatmapNormalizeAxis: "none",
+  clickedHeatmapRenderMode: "pcolormesh",
+  clickedHeatmapTranspose: false,
+  referenceEnabled: false,
+  referenceSelection: "",
+  referenceOffset: 0,
+  lastMeanRawBundle: null,
+  layoutDrag: null,
 };
 
-const STORAGE_KEY = "pl-mapping-viewer-state-v1";
+const STORAGE_KEY = "pl-mapping-viewer-state-v2";
 
 const heatmapScratchCanvas = document.createElement("canvas");
 const heatmapScratchCtx = heatmapScratchCanvas.getContext("2d");
@@ -43,10 +58,28 @@ const els = {
   appError: document.getElementById("app-error"),
   uiTheme: document.getElementById("ui-theme"),
   browserPath: document.getElementById("browser-path"),
-  pickFileButton: document.getElementById("pick-file-button"),
+  openFileModal: document.getElementById("open-file-modal"),
   pickFileInput: document.getElementById("pick-file-input"),
+  modalPickFileInput: document.getElementById("modal-pick-file-input"),
+  importMode: document.getElementById("import-mode"),
+  manualImportSettings: document.getElementById("manual-import-settings"),
+  manualFormat: document.getElementById("manual-format"),
+  importSkipRows: document.getElementById("import-skip-rows"),
+  importDelimiter: document.getElementById("import-delimiter"),
+  importIndexColumn: document.getElementById("import-index-column"),
+  importXColumn: document.getElementById("import-x-column"),
+  importYColumn: document.getElementById("import-y-column"),
+  importDataStartColumn: document.getElementById("import-data-start-column"),
+  manualIndexColumns: document.getElementById("manual-index-columns"),
+  manualXyColumns: document.getElementById("manual-xy-columns"),
+  rememberImportRule: document.getElementById("remember-import-rule"),
+  clearImportRules: document.getElementById("clear-import-rules"),
+  importLearningStatus: document.getElementById("import-learning-status"),
   fileList: document.getElementById("file-list"),
   imageMode: document.getElementById("image-mode"),
+  imageTool: document.getElementById("image-tool"),
+  imageToolHint: document.getElementById("image-tool-hint"),
+  lineThickness: document.getElementById("line-thickness"),
   rangeStart: document.getElementById("range-start"),
   rangeEnd: document.getElementById("range-end"),
   rangeLabel: document.getElementById("range-label"),
@@ -68,6 +101,14 @@ const els = {
   spectrumBackground: document.getElementById("spectrum-background"),
   colorScale: document.getElementById("color-scale"),
   normalizeToggle: document.getElementById("normalize-toggle"),
+  referenceToggle: document.getElementById("reference-toggle"),
+  referenceSelect: document.getElementById("reference-select"),
+  referenceOffset: document.getElementById("reference-offset"),
+  clickedViewMode: document.getElementById("clicked-view-mode"),
+  heatmapControls: document.getElementById("heatmap-controls"),
+  heatmapNormalizeAxis: document.getElementById("heatmap-normalize-axis"),
+  heatmapRenderMode: document.getElementById("heatmap-render-mode"),
+  heatmapTranspose: document.getElementById("heatmap-transpose"),
   smoothToggle: document.getElementById("smooth-toggle"),
   smoothWindow: document.getElementById("smooth-window"),
   smoothPoly: document.getElementById("smooth-poly"),
@@ -109,6 +150,23 @@ const els = {
   clearMulti: document.getElementById("clear-multi"),
   multiGallery: document.getElementById("multi-gallery"),
   multiSubtitle: document.getElementById("multi-subtitle"),
+  importModal: document.getElementById("import-modal"),
+  importModalClose: document.getElementById("import-modal-close"),
+  importModalFile: document.getElementById("import-modal-file"),
+  importModalMeta: document.getElementById("import-modal-meta"),
+  importSuggestedReason: document.getElementById("import-suggested-reason"),
+  importSuggestedDims: document.getElementById("import-suggested-dims"),
+  importSuggestedCopy: document.getElementById("import-suggested-copy"),
+  useSuggestedDims: document.getElementById("use-suggested-dims"),
+  dimensionCandidateList: document.getElementById("dimension-candidate-list"),
+  modalGridWidth: document.getElementById("modal-grid-width"),
+  modalGridHeight: document.getElementById("modal-grid-height"),
+  modalGridValidation: document.getElementById("modal-grid-validation"),
+  importModalOpenButton: document.getElementById("import-modal-open"),
+  contentGrid: document.getElementById("content-grid"),
+  viewerStack: document.getElementById("viewer-stack"),
+  horizontalSplitter: document.getElementById("horizontal-splitter"),
+  verticalSplitter: document.getElementById("vertical-splitter"),
 };
 
 async function fetchJson(url, options = {}) {
@@ -138,6 +196,124 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function baseFileName(name, fallback = "pl-data") {
+  if (!name) return fallback;
+  return name.replace(/\.[^.]+$/u, "") || fallback;
+}
+
+function currentAxisUnit() {
+  return state.selectedFile?.wavelength_unit || state.currentPreview?.wavelength_unit || "nm";
+}
+
+function currentAxisLabel() {
+  return state.selectedFile?.wavelength_axis_label || "Wavelength";
+}
+
+function getImportSettings() {
+  return {
+    importMode: els.importMode.value || "auto",
+    manualFormat: els.manualFormat.value || "index-columns",
+    skipRows: els.importSkipRows.value || "0",
+    delimiter: els.importDelimiter.value || "auto",
+    indexColumn: els.importIndexColumn.value || "0",
+    xColumn: els.importXColumn.value || "0",
+    yColumn: els.importYColumn.value || "1",
+    dataStartColumn: els.importDataStartColumn.value || "1",
+  };
+}
+
+function applyImportSettings(settings = {}) {
+  els.importMode.value = settings.importMode || "auto";
+  els.manualFormat.value = settings.manualFormat || "index-columns";
+  els.importSkipRows.value = settings.skipRows ?? "0";
+  els.importDelimiter.value = settings.delimiter || "auto";
+  els.importIndexColumn.value = settings.indexColumn ?? "0";
+  els.importXColumn.value = settings.xColumn ?? "0";
+  els.importYColumn.value = settings.yColumn ?? "1";
+  els.importDataStartColumn.value = settings.dataStartColumn ?? "1";
+  updateImportUi();
+}
+
+function updateImportUi() {
+  const manual = els.importMode.value === "manual";
+  const xyMode = manual && els.manualFormat.value === "xy-spectra";
+  els.manualImportSettings.hidden = !manual;
+  els.manualIndexColumns.hidden = !manual || xyMode;
+  els.manualXyColumns.hidden = !manual || !xyMode;
+}
+
+function appendImportParams(params) {
+  const settings = getImportSettings();
+  params.set("import_mode", settings.importMode);
+  if (settings.importMode !== "manual") return params;
+  params.set("manual_format", settings.manualFormat);
+  params.set("skip_rows", settings.skipRows);
+  params.set("delimiter", settings.delimiter);
+  params.set("index_column", settings.indexColumn);
+  params.set("x_column", settings.xColumn);
+  params.set("y_column", settings.yColumn);
+  params.set("data_start_column", settings.dataStartColumn);
+  return params;
+}
+
+function setImportLearningStatus(message) {
+  if (!els.importLearningStatus) return;
+  els.importLearningStatus.textContent = message || "";
+}
+
+function normalizeSignatureLine(line) {
+  return line
+    .trim()
+    .toLowerCase()
+    .replace(/[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/g, "#")
+    .replace(/\s+/g, " ")
+    .slice(0, 120);
+}
+
+async function buildFilePatternSignature(file) {
+  const extension = (file.name.match(/\.[^.]+$/u)?.[0] || "").toLowerCase();
+  try {
+    const sample = await file.slice(0, 16384).text();
+    const lines = sample
+      .split(/\r?\n/u)
+      .map(normalizeSignatureLine)
+      .filter(Boolean)
+      .slice(0, 12);
+    if (lines.length) return `${extension}::${lines.join("|")}`;
+  } catch {
+    // ignore
+  }
+  return `${extension}::size:${Math.round(file.size / 1024)}`;
+}
+
+function findImportPreset(signature) {
+  if (!signature) return null;
+  return state.importPresets.find((preset) => preset.signature === signature) || null;
+}
+
+function rememberImportPreset(signature, fileName) {
+  if (!signature) return;
+  const preset = {
+    signature,
+    settings: getImportSettings(),
+    fileName: fileName || state.selectedFile?.name || "learned-format",
+    learnedAt: new Date().toISOString(),
+  };
+  state.importPresets = [preset, ...state.importPresets.filter((item) => item.signature !== signature)].slice(0, 40);
+  setImportLearningStatus(`Learned import rule from ${preset.fileName}.`);
+}
+
+async function applyLearnedImportPreset(file) {
+  state.currentFilePatternSignature = await buildFilePatternSignature(file);
+  const preset = findImportPreset(state.currentFilePatternSignature);
+  if (!preset) {
+    setImportLearningStatus("");
+    return;
+  }
+  applyImportSettings(preset.settings);
+  setImportLearningStatus(`Applied learned rule from ${preset.fileName}.`);
+}
+
 function readStoredState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -151,6 +327,8 @@ function writeStoredState() {
   const payload = {
     selectedPath: state.selectedPath,
     selectedFile: state.selectedFile,
+    importPresets: state.importPresets,
+    importSettings: getImportSettings(),
     selection: state.selection,
     gridWidth: state.gridWidth,
     gridHeight: state.gridHeight,
@@ -158,6 +336,8 @@ function writeStoredState() {
     scanSizeY: els.scanSizeY.value,
     scanUnit: els.scanUnit.value,
     imageMode: els.imageMode.value,
+    imageTool: els.imageTool.value,
+    lineThickness: els.lineThickness.value,
     imageLow: els.imageLow.value,
     imageHigh: els.imageHigh.value,
     uiTheme: els.uiTheme.value,
@@ -168,6 +348,13 @@ function writeStoredState() {
     spectrumBackground: els.spectrumBackground.value,
     colorScale: els.colorScale.value,
     normalizeToggle: els.normalizeToggle.checked,
+    referenceToggle: els.referenceToggle.checked,
+    referenceSelection: els.referenceSelect.value,
+    referenceOffset: els.referenceOffset.value,
+    clickedViewMode: els.clickedViewMode.value,
+    clickedHeatmapNormalizeAxis: els.heatmapNormalizeAxis.value,
+    clickedHeatmapRenderMode: els.heatmapRenderMode.value,
+    clickedHeatmapTranspose: els.heatmapTranspose.checked,
     smoothToggle: els.smoothToggle.checked,
     smoothWindow: els.smoothWindow.value,
     smoothPoly: els.smoothPoly.value,
@@ -183,6 +370,27 @@ function writeStoredState() {
 
 function clearStoredState() {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+function sanitizeLineThickness() {
+  let value = Number(els.lineThickness.value);
+  if (!Number.isInteger(value) || value < 1) value = 1;
+  if (value > 25) value = 25;
+  els.lineThickness.value = String(value);
+  return value;
+}
+
+function updateImageToolHint() {
+  if (els.imageTool.value === "line") {
+    els.imageToolHint.textContent = `Line mode: drag on the map to append line spectra (${sanitizeLineThickness()} px avg).`;
+  } else {
+    els.imageToolHint.textContent = "Point mode: click map to add spectra.";
+  }
+}
+
+function updateClickedViewControls() {
+  const heatmapMode = els.clickedViewMode.value === "heatmap";
+  els.heatmapControls.hidden = !heatmapMode;
 }
 
 function applyTheme(theme) {
@@ -786,15 +994,291 @@ function buildClickedBundles() {
   const smoothWindow = els.smoothWindow.value;
   const smoothPoly = els.smoothPoly.value;
   const offsetFactor = (Number(els.offsetRange.value) / 100) ** 2;
+  const rawBundles = state.clickedTraces.map((trace) => ({
+    label: trace.label,
+    exportLabel: trace.exportLabel || trace.label,
+    x: trace.x.slice(),
+    y: trace.y.slice(),
+    groupType: trace.groupType || "point",
+    groupId: trace.groupId || null,
+    groupLabel: trace.groupLabel || trace.label,
+    pixelX: trace.pixelX,
+    pixelY: trace.pixelY,
+    lineDistancePixels: trace.lineDistancePixels,
+    lineDistancePhysical: trace.lineDistancePhysical,
+    lineDistanceUnit: trace.lineDistanceUnit || "",
+  }));
+  const processed = applyReferenceAndTraceSettings(rawBundles, getSelectedReferenceBundle(rawBundles), {
+    normalize,
+    smoothingEnabled,
+    smoothWindow,
+    smoothPoly,
+    offsetFactor,
+    applyOffset: true,
+  });
+  return processed.map((bundle, index) => ({
+    ...bundle,
+    strokeColor: clickedTraceColor(index, processed.length),
+  }));
+}
 
-  return state.clickedTraces.map((trace, index) => {
-    let yValues = trace.y.slice();
+function safeReferenceDenominator(value) {
+  if (Math.abs(value) < 1e-12) return value < 0 ? -1e-12 : 1e-12;
+  return value;
+}
+
+function applyReferenceDivision(yValues, referenceValues, referenceOffset) {
+  const length = Math.min(yValues.length, referenceValues.length);
+  const offset = Number(referenceOffset) || 0;
+  const output = new Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const denominator = safeReferenceDenominator((referenceValues[index] ?? 0) + offset);
+    output[index] = (yValues[index] ?? 0) / denominator;
+  }
+  return output;
+}
+
+function averageReferenceFromGroup(groupId, rawBundles) {
+  const group = rawBundles.filter((bundle) => bundle.groupId === groupId);
+  if (!group.length) return null;
+  const minLen = Math.min(...group.map((bundle) => Math.min(bundle.x.length, bundle.y.length)));
+  if (minLen < 1) return null;
+  const x = group[0].x.slice(0, minLen);
+  const y = new Array(minLen).fill(0);
+  for (const bundle of group) {
+    for (let index = 0; index < minLen; index += 1) y[index] += bundle.y[index];
+  }
+  for (let index = 0; index < minLen; index += 1) y[index] /= group.length;
+  return { label: group[0].groupLabel || "Line", x, y };
+}
+
+function getSelectedReferenceBundle(rawBundles) {
+  if (!els.referenceToggle.checked) return null;
+  const value = els.referenceSelect.value;
+  if (!value) return null;
+  if (value === "__mean__") return state.lastMeanRawBundle;
+  if (value.startsWith("point:")) return rawBundles.find((bundle) => bundle.label === value.slice(6)) || null;
+  if (value.startsWith("line:")) return averageReferenceFromGroup(value.slice(5), rawBundles);
+  return null;
+}
+
+function applyReferenceAndTraceSettings(rawBundles, referenceBundle, options = {}) {
+  const normalize = Boolean(options.normalize);
+  const smoothingEnabled = Boolean(options.smoothingEnabled);
+  const smoothWindow = options.smoothWindow;
+  const smoothPoly = options.smoothPoly;
+  const offsetFactor = Number(options.offsetFactor) || 0;
+  const applyOffset = Boolean(options.applyOffset);
+  const referenceOffset = Number(els.referenceOffset.value) || 0;
+
+  return rawBundles.map((bundle, index) => {
+    let xValues = bundle.x.slice();
+    let yValues = bundle.y.slice();
+    if (referenceBundle?.y?.length) {
+      const length = Math.min(xValues.length, yValues.length, referenceBundle.y.length);
+      xValues = xValues.slice(0, length);
+      yValues = applyReferenceDivision(yValues.slice(0, length), referenceBundle.y.slice(0, length), referenceOffset);
+    }
     if (smoothingEnabled) yValues = smoothSeries(yValues, smoothWindow, smoothPoly);
     if (normalize) yValues = normalizeSeries(yValues);
-    const localRange = Math.max(1e-12, Math.max(...yValues) - Math.min(...yValues));
-    yValues = yValues.map((value) => value + index * localRange * offsetFactor);
-    return { label: trace.label, x: trace.x.slice(), y: yValues, strokeColor: clickedTraceColor(index, state.clickedTraces.length) };
+    if (applyOffset) {
+      const localRange = Math.max(1e-12, Math.max(...yValues) - Math.min(...yValues));
+      yValues = yValues.map((value) => value + index * localRange * offsetFactor);
+    }
+    return {
+      ...bundle,
+      x: xValues.slice(0, yValues.length),
+      y: yValues,
+    };
   });
+}
+
+function buildCenteredEdges(values) {
+  if (!values.length) return [];
+  if (values.length === 1) return [values[0] - 0.5, values[0] + 0.5];
+  const edges = [values[0] - (values[1] - values[0]) / 2];
+  for (let index = 1; index < values.length; index += 1) {
+    edges.push((values[index - 1] + values[index]) / 2);
+  }
+  edges.push(values[values.length - 1] + (values[values.length - 1] - values[values.length - 2]) / 2);
+  return edges;
+}
+
+function getNestedFiniteMinMax(rows) {
+  let min = Infinity;
+  let max = -Infinity;
+  let count = 0;
+  rows.forEach((row) => {
+    row.forEach((value) => {
+      if (!Number.isFinite(value)) return;
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      count += 1;
+    });
+  });
+  if (!count) return { min: 0, max: 1, count: 0 };
+  return { min, max, count };
+}
+
+function normalizeHeatmapRows(rows) {
+  return rows.map((row) => {
+    const finite = row.filter((value) => Number.isFinite(value));
+    if (!finite.length) return row.slice();
+    const min = Math.min(...finite);
+    const max = Math.max(...finite);
+    const range = Math.max(1e-12, max - min);
+    return row.map((value) => (Number.isFinite(value) ? (value - min) / range : value));
+  });
+}
+
+function normalizeHeatmapCols(rows) {
+  if (!rows.length || !rows[0]?.length) return rows.map((row) => row.slice());
+  const width = rows[0].length;
+  const mins = new Array(width).fill(Infinity);
+  const maxs = new Array(width).fill(-Infinity);
+  rows.forEach((row) => {
+    row.forEach((value, index) => {
+      if (!Number.isFinite(value)) return;
+      mins[index] = Math.min(mins[index], value);
+      maxs[index] = Math.max(maxs[index], value);
+    });
+  });
+  return rows.map((row) =>
+    row.map((value, index) => {
+      if (!Number.isFinite(value)) return value;
+      const range = Math.max(1e-12, maxs[index] - mins[index]);
+      return (value - mins[index]) / range;
+    })
+  );
+}
+
+function transposeRows(rows) {
+  if (!rows.length || !rows[0]?.length) return [];
+  return rows[0].map((_, columnIndex) => rows.map((row) => row[columnIndex]));
+}
+
+function getClickedHeatmapData(bundles) {
+  const valid = bundles.filter((bundle) => bundle.x?.length && bundle.y?.length);
+  if (!valid.length) return null;
+  const minLen = Math.min(...valid.map((bundle) => Math.min(bundle.x.length, bundle.y.length)));
+  if (minLen < 1) return null;
+  const baseX = valid[0].x.slice(0, minLen);
+  const baseRows = valid.map((bundle) => bundle.y.slice(0, minLen));
+  const baseRowLabels = valid.map((bundle) => bundle.groupLabel || bundle.label);
+
+  let xValues = baseX.slice();
+  let yValues = Array.from({ length: baseRows.length }, (_, index) => index + 1);
+  let rowLabels = baseRowLabels.slice();
+  let columnLabels = baseX.map((value) => formatNumber(value, 2));
+  let zRows = baseRows.map((row) => row.slice());
+  let xLabel = `${currentAxisLabel()} (${currentAxisUnit()})`;
+  let yLabel = "Trace index";
+
+  if (els.heatmapTranspose.checked) {
+    zRows = transposeRows(zRows);
+    xValues = Array.from({ length: baseRows.length }, (_, index) => index + 1);
+    yValues = baseX.slice();
+    rowLabels = baseX.map((value) => formatNumber(value, 2));
+    columnLabels = baseRowLabels.slice();
+    xLabel = "Trace index";
+    yLabel = `${currentAxisLabel()} (${currentAxisUnit()})`;
+  }
+
+  if (els.heatmapNormalizeAxis.value === "x") zRows = normalizeHeatmapRows(zRows);
+  else if (els.heatmapNormalizeAxis.value === "y") zRows = normalizeHeatmapCols(zRows);
+
+  return {
+    xValues,
+    yValues,
+    zRows,
+    rowLabels,
+    columnLabels,
+    xLabel,
+    yLabel,
+    renderMode: els.heatmapRenderMode.value,
+  };
+}
+
+function drawClickedHeatmap(canvas, heatmap) {
+  const width = canvas.clientWidth || 960;
+  const height = canvas.clientHeight || 420;
+  const ctx = setCanvasSize(canvas, width, height);
+  const [bgTop, bgBottom] = plotBackgroundStops(els.spectrumBackground.value);
+  const theme = plotThemeForBackground(els.spectrumBackground.value);
+  if (bgTop && bgBottom) {
+    const bg = ctx.createLinearGradient(0, 0, 0, height);
+    bg.addColorStop(0, bgTop);
+    bg.addColorStop(1, bgBottom);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+  } else {
+    ctx.clearRect(0, 0, width, height);
+  }
+  if (!heatmap?.xValues?.length || !heatmap?.yValues?.length || !heatmap?.zRows?.length) {
+    ctx.fillStyle = theme.emptyText;
+    ctx.font = '14px "Avenir Next", sans-serif';
+    ctx.textAlign = "center";
+    ctx.fillText("No data.", width / 2, height / 2);
+    return null;
+  }
+
+  const padding = { left: 72, right: 20, top: 24, bottom: 50 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const xEdges = buildCenteredEdges(heatmap.xValues);
+  const yEdges = buildCenteredEdges(heatmap.yValues);
+  const stats = getNestedFiniteMinMax(heatmap.zRows);
+  const zMin = stats.min;
+  const zRange = Math.max(1e-12, stats.max - stats.min);
+  const xMin = xEdges[0];
+  const xMax = xEdges[xEdges.length - 1];
+  const yMin = yEdges[0];
+  const yMax = yEdges[yEdges.length - 1];
+  const mapX = (value) => padding.left + ((value - xMin) / Math.max(1e-12, xMax - xMin)) * innerWidth;
+  const mapY = (value) => padding.top + innerHeight - ((value - yMin) / Math.max(1e-12, yMax - yMin)) * innerHeight;
+
+  for (let rowIndex = 0; rowIndex < heatmap.zRows.length; rowIndex += 1) {
+    const row = heatmap.zRows[rowIndex];
+    for (let colIndex = 0; colIndex < row.length; colIndex += 1) {
+      const value = row[colIndex];
+      if (!Number.isFinite(value)) continue;
+      const normalized = (value - zMin) / zRange;
+      ctx.fillStyle = colorToCss(mapColorByName(els.spectrumColorMap.value, normalized, Boolean(els.invertSpectrumColormap.checked)));
+      const left = mapX(xEdges[colIndex]);
+      const right = mapX(xEdges[colIndex + 1]);
+      const top = mapY(yEdges[rowIndex + 1]);
+      const bottom = mapY(yEdges[rowIndex]);
+      ctx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+    }
+  }
+
+  ctx.strokeStyle = theme.grid;
+  ctx.strokeRect(padding.left, padding.top, innerWidth, innerHeight);
+  ctx.fillStyle = theme.axisText;
+  ctx.font = '12px "Avenir Next", sans-serif';
+  ctx.textAlign = "center";
+  ctx.fillText(heatmap.xLabel, padding.left + innerWidth / 2, height - 14);
+  ctx.save();
+  ctx.translate(18, padding.top + innerHeight / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(heatmap.yLabel, 0, 0);
+  ctx.restore();
+
+  ctx.font = '11px "Avenir Next", sans-serif';
+  ctx.textAlign = "center";
+  const xTickValues = [heatmap.xValues[0], heatmap.xValues[Math.floor((heatmap.xValues.length - 1) / 2)], heatmap.xValues[heatmap.xValues.length - 1]];
+  xTickValues.forEach((value) => {
+    const px = mapX(value);
+    ctx.fillText(formatNumber(value, 1), px, padding.top + innerHeight + 18);
+  });
+
+  ctx.textAlign = "right";
+  const yTickValues = [heatmap.yValues[0], heatmap.yValues[Math.floor((heatmap.yValues.length - 1) / 2)], heatmap.yValues[heatmap.yValues.length - 1]];
+  yTickValues.forEach((value) => {
+    const py = mapY(value);
+    ctx.fillText(formatNumber(value, 1), padding.left - 8, py + 4);
+  });
+  return null;
 }
 
 function drawPlot(canvas, bundles, xLabel, options = {}) {
@@ -919,7 +1403,8 @@ function drawPlot(canvas, bundles, xLabel, options = {}) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const label = `${formatNumber(options.hoverGuideX, 2)} nm`;
+    const hoverUnit = options.xUnit || "nm";
+    const label = `${formatNumber(options.hoverGuideX, 2)} ${hoverUnit}`;
     ctx.font = '11px "Avenir Next", sans-serif';
     const labelWidth = Math.ceil(ctx.measureText(label).width) + 12;
     const labelX = Math.max(padding.left, Math.min(width - padding.right - labelWidth, guideX - labelWidth / 2));
@@ -1014,7 +1499,7 @@ function updateOffsetLabel() {
 
 function defaultSmoothWindow(length) {
   if (!Number.isFinite(length) || length < 3) return 3;
-  let windowSize = Math.round(length * 0.05);
+  let windowSize = Math.round(length * 0.005);
   if (windowSize < 3) windowSize = 3;
   if (windowSize > length) windowSize = length;
   return Math.max(3, windowSize);
@@ -1051,10 +1536,11 @@ function syncRangeInputs() {
 }
 
 function updateRangeLabel() {
+  const unit = currentAxisUnit();
   if (state.selection.type === "point") {
-    els.rangeLabel.textContent = `Point: ${formatNumber(state.selection.targetWavelength, 2)} nm`;
+    els.rangeLabel.textContent = `Point: ${formatNumber(state.selection.targetWavelength, 2)} ${unit}`;
   } else {
-    els.rangeLabel.textContent = `Range: ${formatNumber(state.selection.startWavelength, 2)} - ${formatNumber(state.selection.endWavelength, 2)} nm`;
+    els.rangeLabel.textContent = `Range: ${formatNumber(state.selection.startWavelength, 2)} - ${formatNumber(state.selection.endWavelength, 2)} ${unit}`;
   }
 }
 
@@ -1065,16 +1551,30 @@ function scanSizeText() {
   return `${formatNumber(sizeX, 2)} x ${formatNumber(sizeY, 2)} ${els.scanUnit.value}`;
 }
 
+function getSpatialCalibration(width, height) {
+  const sizeX = Number(els.scanSizeX.value);
+  const sizeY = Number(els.scanSizeY.value);
+  if (!(sizeX > 0 && sizeY > 0)) return null;
+  return {
+    xStep: width > 1 ? sizeX / (width - 1) : 0,
+    yStep: height > 1 ? sizeY / (height - 1) : 0,
+    unit: els.scanUnit.value || "",
+  };
+}
+
 function updateGridHint() {
-  if (!state.selectedFile) {
-    els.gridHint.textContent = "Square maps are inferred automatically.";
+  const meta = activeFileMeta();
+  if (!meta) {
+    els.gridHint.textContent = "Open a file first. We will suggest pixel dimensions before rendering.";
     return;
   }
-  if (state.selectedFile.requires_manual_dimensions) {
-    els.gridHint.textContent = `Manual input required. X * Y must equal ${state.selectedFile.pixel_count}. Wavelengths: ${state.selectedFile.slice_count}.`;
+  if (meta.requires_manual_dimensions) {
+    els.gridHint.textContent = `This file has ${meta.pixel_count} pixels. Choose Width × Height in the popup or edit it here.`;
     return;
   }
-  els.gridHint.textContent = `Square map inferred: ${state.selectedFile.width} x ${state.selectedFile.height}. Wavelengths: ${state.selectedFile.slice_count}.`;
+  const suggestedWidth = meta.suggested_width || meta.width;
+  const suggestedHeight = meta.suggested_height || meta.height;
+  els.gridHint.textContent = `Suggested shape: ${suggestedWidth} x ${suggestedHeight}. You can still override it manually.`;
 }
 
 function syncSmoothDefaults(force = false) {
@@ -1091,25 +1591,176 @@ function syncSmoothDefaults(force = false) {
 }
 
 function renderSelectedFileSummary() {
-  if (!state.selectedFile) {
+  const meta = activeFileMeta();
+  if (!meta) {
     els.browserPath.textContent = "No file selected.";
     els.fileList.className = "file-list empty";
-    els.fileList.textContent = "Choose a pickle file from Finder.";
+    els.fileList.textContent = "Choose a data file from Finder.";
     updateGridHint();
     return;
   }
   const dims = getGridDimensions();
-  const width = dims?.width || state.selectedFile.width;
-  const height = dims?.height || state.selectedFile.height;
-  els.browserPath.textContent = "File loaded.";
+  const width = dims?.width || meta.width || meta.suggested_width || meta.inferred_width || 0;
+  const height = dims?.height || meta.height || meta.suggested_height || meta.inferred_height || 0;
+  els.browserPath.textContent = state.selectedFile ? "File loaded." : "File analyzed. Confirm pixel dimensions.";
   els.fileList.className = "file-list";
   els.fileList.innerHTML = `
     <div class="file-item active">
-      <strong>Loaded dataset</strong>
-      <span>${width} x ${height} pixels • ${state.selectedFile.slice_count} wavelengths • ${formatBytes(state.selectedFile.size_bytes)}</span>
+      <strong>${meta.name || "Selected dataset"}</strong>
+      <span>${width} x ${height} pixels • ${meta.slice_count} slices • ${formatBytes(meta.size_bytes)}</span>
     </div>
   `;
   updateGridHint();
+}
+
+function closeImportModal() {
+  state.importModalOpen = false;
+  els.importModal.hidden = true;
+}
+
+function resetImportModalView() {
+  els.importModalFile.textContent = "No file selected";
+  els.importModalMeta.textContent = "Choose a file to start the analysis.";
+  els.importSuggestedReason.textContent = "";
+  els.importSuggestedDims.textContent = "-";
+  els.importSuggestedCopy.textContent = "No automatic suggestion yet.";
+  els.dimensionCandidateList.innerHTML = "";
+  setModalDimensions(0, 0);
+}
+
+function setModalDimensions(width, height) {
+  els.modalGridWidth.value = width > 0 ? String(width) : "0";
+  els.modalGridHeight.value = height > 0 ? String(height) : "0";
+  updateModalValidation();
+}
+
+function updateModalValidation() {
+  const analysis = state.fileAnalysis;
+  if (!analysis) {
+    els.modalGridValidation.textContent = "Open a file first.";
+    return false;
+  }
+  const width = Number(els.modalGridWidth.value);
+  const height = Number(els.modalGridHeight.value);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    els.modalGridValidation.textContent = `Enter positive integers. Pixel count must equal ${analysis.pixel_count}.`;
+    return false;
+  }
+  const product = width * height;
+  if (product !== analysis.pixel_count) {
+    els.modalGridValidation.textContent = `${width} × ${height} = ${product}. It must equal ${analysis.pixel_count}.`;
+    return false;
+  }
+  els.modalGridValidation.textContent = `${width} × ${height} confirmed.`;
+  return true;
+}
+
+function renderDimensionCandidates(analysis) {
+  els.dimensionCandidateList.innerHTML = "";
+  const candidates = Array.isArray(analysis.dimension_candidates) ? analysis.dimension_candidates : [];
+  candidates.forEach((candidate, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "candidate-chip";
+    button.textContent = `${candidate.width} × ${candidate.height}`;
+    button.addEventListener("click", () => {
+      setModalDimensions(candidate.width, candidate.height);
+      els.dimensionCandidateList.querySelectorAll(".candidate-chip").forEach((chip) => chip.classList.remove("active"));
+      button.classList.add("active");
+    });
+    if (Number(els.modalGridWidth.value) === Number(candidate.width) && Number(els.modalGridHeight.value) === Number(candidate.height)) {
+      button.classList.add("active");
+    }
+    els.dimensionCandidateList.appendChild(button);
+  });
+}
+
+function openImportModal(analysis) {
+  state.importModalOpen = true;
+  els.importModal.hidden = false;
+  if (!analysis) {
+    resetImportModalView();
+    return;
+  }
+  els.importModalFile.textContent = analysis.name || "Selected file";
+  const minWave = Number.isFinite(analysis.min_wavelength) ? formatNumber(analysis.min_wavelength, 2) : "-";
+  const maxWave = Number.isFinite(analysis.max_wavelength) ? formatNumber(analysis.max_wavelength, 2) : "-";
+  els.importModalMeta.textContent = `${analysis.pixel_count} pixels • ${analysis.slice_count} slices • ${minWave} - ${maxWave} ${analysis.wavelength_unit || ""}`.trim();
+  els.importSuggestedReason.textContent = suggestionReasonLabel(analysis.suggestion_reason);
+  if (analysis.suggested_width && analysis.suggested_height) {
+    els.importSuggestedDims.textContent = `${analysis.suggested_width} × ${analysis.suggested_height}`;
+    els.importSuggestedCopy.textContent = `We can suggest this from ${suggestionReasonLabel(analysis.suggestion_reason).toLowerCase()}.`;
+    setModalDimensions(analysis.suggested_width, analysis.suggested_height);
+  } else {
+    els.importSuggestedDims.textContent = "No clear suggestion";
+    els.importSuggestedCopy.textContent = "Choose a factor pair or type your own width and height.";
+    setModalDimensions(0, 0);
+  }
+  renderDimensionCandidates(analysis);
+  updateModalValidation();
+}
+
+async function confirmImportDimensionsAndRender() {
+  if (!state.fileAnalysis) return;
+  if (!updateModalValidation()) {
+    showError("Choose valid pixel dimensions before opening the file.");
+    return;
+  }
+  state.gridWidth = Number(els.modalGridWidth.value);
+  state.gridHeight = Number(els.modalGridHeight.value);
+  syncGridInputsFromState();
+  await refreshSelectedFileFromImportSettings(true);
+  closeImportModal();
+}
+
+function resetSelectionFromFile(file) {
+  const anchor = Number.isFinite(file?.min_wavelength) ? file.min_wavelength : 0;
+  state.selection = {
+    type: "point",
+    targetWavelength: anchor,
+    startWavelength: anchor,
+    endWavelength: anchor,
+  };
+}
+
+function clampSelectionToFile(file) {
+  if (!file) return;
+  const minWave = Number.isFinite(file.min_wavelength) ? file.min_wavelength : 0;
+  const maxWave = Number.isFinite(file.max_wavelength) ? file.max_wavelength : minWave;
+  const clamp = (value) => Math.max(minWave, Math.min(maxWave, Number.isFinite(value) ? value : minWave));
+  if (!Number.isFinite(state.selection.targetWavelength)) {
+    resetSelectionFromFile(file);
+    return;
+  }
+  state.selection.targetWavelength = clamp(state.selection.targetWavelength);
+  state.selection.startWavelength = clamp(state.selection.startWavelength);
+  state.selection.endWavelength = clamp(state.selection.endWavelength);
+  if (state.selection.type === "range" && state.selection.startWavelength > state.selection.endWavelength) {
+    [state.selection.startWavelength, state.selection.endWavelength] = [state.selection.endWavelength, state.selection.startWavelength];
+  }
+}
+
+async function refreshSelectedFileFromImportSettings(resetSelection = false, options = {}) {
+  if (!state.selectedPath) return;
+  const info = await fetchJson(buildFileInfoRequest(state.selectedPath, options));
+  state.selectedFile = info;
+  state.fileAnalysis = info;
+  const dims = getGridDimensions();
+  state.gridWidth = dims?.width ?? (info.requires_manual_dimensions ? null : info.width);
+  state.gridHeight = dims?.height ?? (info.requires_manual_dimensions ? null : info.height);
+  syncGridInputsFromState();
+  if (resetSelection) resetSelectionFromFile(info);
+  else clampSelectionToFile(info);
+  syncSmoothDefaults(true);
+  state.imageCache.clear();
+  state.traceCache.clear();
+  state.clickedTraces = [];
+  renderClickedList();
+  renderMarkers();
+  updateReferenceControls();
+  renderSelectedFileSummary();
+  syncRangeInputs();
+  await renderCurrentFile();
 }
 
 function currentImageSummary() {
@@ -1118,10 +1769,11 @@ function currentImageSummary() {
   const width = dims?.width || state.selectedFile.width;
   const height = dims?.height || state.selectedFile.height;
   const modeText = els.imageMode.value === "mean" ? "Range Mean" : "Range Sum";
+  const unit = currentAxisUnit();
   const selectionText =
     state.selection.type === "point"
-      ? `${formatNumber(state.selection.targetWavelength, 2)} nm`
-      : `${formatNumber(state.selection.startWavelength, 2)}-${formatNumber(state.selection.endWavelength, 2)} nm`;
+      ? `${formatNumber(state.selection.targetWavelength, 2)} ${unit}`
+      : `${formatNumber(state.selection.startWavelength, 2)}-${formatNumber(state.selection.endWavelength, 2)} ${unit}`;
   return {
     title: state.selectedFile.name,
     subtitle: `${width} x ${height} px • ${modeText} • ${selectionText}`,
@@ -1142,9 +1794,18 @@ function imagePreviewCsv(preview) {
 
 function tracesToCsv(bundles) {
   if (!bundles.length) return "wavelength";
+  const lineOnly = bundles.every((bundle) => bundle.groupType === "line");
   const length = bundles[0].x.length;
-  const header = ["wavelength", ...bundles.map((bundle) => bundle.label)];
+  const header = ["wavelength", ...bundles.map((bundle) => bundle.exportLabel || bundle.label)];
   const rows = [header.map(csvEscape).join(",")];
+  if (lineOnly) {
+    rows.push(["pixel_coordinate", ...bundles.map((bundle) => `(${bundle.pixelX}, ${bundle.pixelY})`)].map(csvEscape).join(","));
+    rows.push(["distance_px", ...bundles.map((bundle) => formatNumber(bundle.lineDistancePixels, 4))].map(csvEscape).join(","));
+    if (bundles.some((bundle) => Number.isFinite(bundle.lineDistancePhysical))) {
+      const unit = bundles.find((bundle) => bundle.lineDistanceUnit)?.lineDistanceUnit || "physical";
+      rows.push([`distance_${unit}`, ...bundles.map((bundle) => (Number.isFinite(bundle.lineDistancePhysical) ? formatNumber(bundle.lineDistancePhysical, 6) : ""))].map(csvEscape).join(","));
+    }
+  }
   for (let index = 0; index < length; index += 1) {
     const row = [bundles[0].x[index], ...bundles.map((bundle) => bundle.y[index])];
     rows.push(row.map(csvEscape).join(","));
@@ -1231,7 +1892,40 @@ function buildImageRequest(path) {
     params.set("grid_width", String(dims.width));
     params.set("grid_height", String(dims.height));
   }
+  appendImportParams(params);
   return `/api/pl-image?${params.toString()}`;
+}
+
+function buildFileInfoRequest(path, options = {}) {
+  const params = new URLSearchParams({ path });
+  const dims = options.includeGridDimensions === false ? null : getGridDimensions();
+  if (dims) {
+    params.set("grid_width", String(dims.width));
+    params.set("grid_height", String(dims.height));
+  }
+  appendImportParams(params);
+  return `/api/file-info?${params.toString()}`;
+}
+
+function buildFileAnalysisRequest(path) {
+  const params = new URLSearchParams({ path });
+  appendImportParams(params);
+  return `/api/file-analysis?${params.toString()}`;
+}
+
+async function fetchFileAnalysis(path) {
+  return fetchJson(buildFileAnalysisRequest(path));
+}
+
+function suggestionReasonLabel(reason) {
+  if (reason === "embedded-metadata") return "Embedded metadata";
+  if (reason === "perfect-square") return "Square-root guess";
+  if (reason === "factor-candidate") return "Closest factor pair";
+  return "Manual choice recommended";
+}
+
+function activeFileMeta() {
+  return state.selectedFile || state.fileAnalysis;
 }
 
 async function fetchImagePayload(path) {
@@ -1256,9 +1950,158 @@ async function loadTrace(path, x, y) {
     params.set("grid_width", String(dims.width));
     params.set("grid_height", String(dims.height));
   }
+  appendImportParams(params);
   const payload = await fetchJson(`/api/pl-trace?${params.toString()}`);
   state.traceCache.set(key, payload);
   return payload;
+}
+
+function getImportQueryParams() {
+  const params = new URLSearchParams();
+  const dims = getGridDimensions();
+  if (dims) {
+    params.set("grid_width", String(dims.width));
+    params.set("grid_height", String(dims.height));
+  }
+  appendImportParams(params);
+  return params;
+}
+
+function getLinePixels(start, end) {
+  let x0 = start.x;
+  let y0 = start.y;
+  const x1 = end.x;
+  const y1 = end.y;
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  const points = [];
+  while (true) {
+    points.push({ x: x0, y: y0 });
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x0 += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y0 += sy;
+    }
+  }
+  return points;
+}
+
+function sampleLineTraceItems(traces, maxCount = 96) {
+  if (traces.length <= maxCount) return traces.slice();
+  const sampled = [];
+  for (let index = 0; index < maxCount; index += 1) {
+    const sourceIndex = Math.round((index * (traces.length - 1)) / Math.max(1, maxCount - 1));
+    sampled.push(traces[sourceIndex]);
+  }
+  return sampled;
+}
+
+async function fetchSampledPlLineFallback(path, start, end, maxCount = 96) {
+  const points = sampleLineTraceItems(getLinePixels(start, end), maxCount);
+  const traces = [];
+  let xAxis = [];
+  let xUnit = currentAxisUnit();
+  let xLabel = currentAxisLabel();
+  for (const point of points) {
+    const payload = await loadTrace(path, point.x, point.y);
+    if (!payload?.x?.length || !payload?.trace?.length) continue;
+    if (!xAxis.length) {
+      xAxis = payload.x.slice();
+      xUnit = payload.x_unit || xUnit;
+      xLabel = payload.x_label || xLabel;
+    }
+    traces.push({
+      pixel_x: point.x,
+      pixel_y: point.y,
+      trace: payload.trace.slice(),
+      average_count: 1,
+    });
+  }
+  return {
+    x: xAxis,
+    x_unit: xUnit,
+    x_label: xLabel,
+    y_unit: "Intensity (a.u.)",
+    start_x: start.x,
+    start_y: start.y,
+    end_x: end.x,
+    end_y: end.y,
+    thickness: 1,
+    traces,
+    fallback: true,
+  };
+}
+
+async function getPlLineTracePayload(path, start, end, options = {}) {
+  const thickness = Math.max(1, Number.isFinite(Number(options.thickness)) ? Number(options.thickness) : 1);
+  const params = new URLSearchParams({
+    path,
+    x1: String(start.x),
+    y1: String(start.y),
+    x2: String(end.x),
+    y2: String(end.y),
+    thickness: String(thickness),
+  });
+  const shared = getImportQueryParams();
+  shared.forEach((value, key) => params.set(key, value));
+  try {
+    return await fetchJson(`/api/pl-line-trace?${params.toString()}`);
+  } catch (error) {
+    console.warn("Falling back to sampled per-pixel line extraction", error);
+    return fetchSampledPlLineFallback(path, start, end, 96);
+  }
+}
+
+function buildPlLineTraceItems(payload) {
+  const traces = sampleLineTraceItems(Array.isArray(payload?.traces) ? payload.traces : [], 96);
+  const groupId = `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const groupLabel = `Line (${payload.start_x}, ${payload.start_y}) → (${payload.end_x}, ${payload.end_y})`;
+  const calibration = getSpatialCalibration(payload.width, payload.height);
+  return traces.map((trace, index) => {
+    const dx = trace.pixel_x - payload.start_x;
+    const dy = trace.pixel_y - payload.start_y;
+    const lineDistancePixels = Math.hypot(dx, dy);
+    const lineDistancePhysical = calibration ? Math.hypot(dx * calibration.xStep, dy * calibration.yStep) : null;
+    const distanceLabel = Number.isFinite(lineDistancePhysical)
+      ? `${formatNumber(lineDistancePhysical, 3)} ${calibration.unit}`.trim()
+      : `${formatNumber(lineDistancePixels, 2)} px`;
+    return {
+      label: `L${index + 1} (${trace.pixel_x}, ${trace.pixel_y})`,
+      exportLabel: distanceLabel,
+      groupId,
+      groupType: "line",
+      groupLabel,
+      pixelX: trace.pixel_x,
+      pixelY: trace.pixel_y,
+      lineDistancePixels,
+      lineDistancePhysical,
+      lineDistanceUnit: calibration?.unit || "",
+      x: payload.x.slice(),
+      y: trace.trace.slice(),
+    };
+  });
+}
+
+async function appendPlLineTrace(path, start, end, thickness = 1) {
+  const payload = await getPlLineTracePayload(path, start, end, { thickness });
+  const items = buildPlLineTraceItems(payload);
+  if (!items.length) return;
+  for (const item of items) {
+    state.clickedTraces = state.clickedTraces.filter((entry) => entry.label !== item.label);
+    state.clickedTraces.push(item);
+  }
+  renderClickedList();
+  updateReferenceControls();
+  renderMarkers();
+  await renderMeanAndClickedPlots();
 }
 
 function getMapLayout(preview) {
@@ -1301,6 +2144,29 @@ function renderMarkers() {
     marker.style.top = `${layout.drawTop + ((trace.pixelY + 0.5) / preview.source_height) * layout.drawHeight}px`;
     els.markerLayer.appendChild(marker);
   });
+  if (state.lineDrag?.start && state.lineDrag?.current) {
+    const startX = layout.drawLeft + ((state.lineDrag.start.x + 0.5) / preview.source_width) * layout.drawWidth;
+    const startY = layout.drawTop + ((state.lineDrag.start.y + 0.5) / preview.source_height) * layout.drawHeight;
+    const endX = layout.drawLeft + ((state.lineDrag.current.x + 0.5) / preview.source_width) * layout.drawWidth;
+    const endY = layout.drawTop + ((state.lineDrag.current.y + 0.5) / preview.source_height) * layout.drawHeight;
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const length = Math.hypot(dx, dy);
+    const line = document.createElement("div");
+    line.className = "line-overlay";
+    line.style.left = `${startX}px`;
+    line.style.top = `${startY}px`;
+    line.style.width = `${Math.max(2, length)}px`;
+    line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+    els.markerLayer.appendChild(line);
+    for (const point of [state.lineDrag.start, state.lineDrag.current]) {
+      const handle = document.createElement("div");
+      handle.className = "line-handle";
+      handle.style.left = `${layout.drawLeft + ((point.x + 0.5) / preview.source_width) * layout.drawWidth}px`;
+      handle.style.top = `${layout.drawTop + ((point.y + 0.5) / preview.source_height) * layout.drawHeight}px`;
+      els.markerLayer.appendChild(handle);
+    }
+  }
 }
 
 async function renderPreview() {
@@ -1320,9 +2186,9 @@ async function renderPreview() {
     els.imageHighValue.value = String(Number(autoLimits.max.toFixed(6)));
     els.imageTitle.textContent = file.name;
     if (payload.selection === "range") {
-      els.imageSubtitle.textContent = `${payload.mode === "mean" ? "Range mean" : "Range sum"} • ${formatNumber(payload.range_start_wavelength, 2)} - ${formatNumber(payload.range_end_wavelength, 2)} nm`;
+      els.imageSubtitle.textContent = `${payload.mode === "mean" ? "Range mean" : "Range sum"} • ${formatNumber(payload.range_start_wavelength, 2)} - ${formatNumber(payload.range_end_wavelength, 2)} ${payload.wavelength_unit}`;
     } else {
-      els.imageSubtitle.textContent = `Single wavelength • ${formatNumber(payload.target_wavelength, 2)} nm`;
+      els.imageSubtitle.textContent = `Single ${payload.wavelength_axis_label.toLowerCase()} • ${formatNumber(payload.target_wavelength, 2)} ${payload.wavelength_unit}`;
     }
   renderHeatmapToCanvas(
     els.imageCanvas,
@@ -1348,18 +2214,72 @@ async function renderPreview() {
 
 function renderClickedList() {
   els.clickedList.innerHTML = "";
+  const groupedEntries = [];
+  const lineGroups = new Map();
   state.clickedTraces.forEach((trace) => {
+    if (trace.groupType === "line" && trace.groupId) {
+      if (!lineGroups.has(trace.groupId)) {
+        lineGroups.set(trace.groupId, {
+          id: trace.groupId,
+          label: trace.groupLabel || "Line",
+          remove: async () => {
+        state.clickedTraces = state.clickedTraces.filter((item) => item.groupId !== trace.groupId);
+        renderClickedList();
+        renderMarkers();
+        updateReferenceControls();
+        await renderMeanAndClickedPlots();
+      },
+    });
+      }
+      return;
+    }
+    groupedEntries.push({
+      id: trace.label,
+      label: trace.label,
+      remove: async () => {
+        state.clickedTraces = state.clickedTraces.filter((item) => item.label !== trace.label);
+        renderClickedList();
+        renderMarkers();
+        updateReferenceControls();
+        await renderMeanAndClickedPlots();
+      },
+    });
+  });
+  groupedEntries.push(...lineGroups.values());
+  groupedEntries.forEach((entry) => {
     const chip = document.createElement("div");
     chip.className = "chip";
-    chip.innerHTML = `<span>${trace.label}</span><button type="button" aria-label="Remove ${trace.label}">x</button>`;
-    chip.querySelector("button").addEventListener("click", async () => {
-      state.clickedTraces = state.clickedTraces.filter((item) => item.label !== trace.label);
-      renderClickedList();
-      renderMarkers();
-      await renderMeanAndClickedPlots();
-    });
+    chip.innerHTML = `<span>${entry.label}</span><button type="button" aria-label="Remove ${entry.label}">x</button>`;
+    chip.querySelector("button").addEventListener("click", entry.remove);
     els.clickedList.appendChild(chip);
   });
+}
+
+function updateReferenceControls() {
+  const currentValue = els.referenceSelect.value;
+  const options = [{ value: "", label: "None" }, { value: "__mean__", label: "Global Mean" }];
+  const lineGroups = new Map();
+  state.clickedTraces.forEach((trace) => {
+    if (trace.groupType === "line" && trace.groupId) {
+      if (!lineGroups.has(trace.groupId)) {
+        lineGroups.set(trace.groupId, trace.groupLabel || "Line");
+      }
+      return;
+    }
+    options.push({ value: `point:${trace.label}`, label: trace.label });
+  });
+  lineGroups.forEach((label, groupId) => {
+    options.push({ value: `line:${groupId}`, label });
+  });
+
+  els.referenceSelect.innerHTML = "";
+  options.forEach((option) => {
+    const node = document.createElement("option");
+    node.value = option.value;
+    node.textContent = option.label;
+    els.referenceSelect.appendChild(node);
+  });
+  els.referenceSelect.value = options.some((option) => option.value === currentValue) ? currentValue : "";
 }
 
 function schedulePlotRender() {
@@ -1376,18 +2296,41 @@ async function renderMeanAndClickedPlots() {
   if (!file) return;
   try {
     const meanPayload = await loadTrace(file.path, 0, 0);
+    state.lastMeanRawBundle = {
+      label: "Global Mean",
+      x: meanPayload.x.slice(),
+      y: meanPayload.mean_trace.slice(),
+    };
     const selectionGuideX = state.selection.type === "point" ? state.selection.targetWavelength : null;
     const rangeStart = state.selection.type === "range" ? state.selection.startWavelength : null;
     const rangeEnd = state.selection.type === "range" ? state.selection.endWavelength : null;
+    const rawClickedBundles = state.clickedTraces.map((trace) => ({
+      label: trace.label,
+      x: trace.x.slice(),
+      y: trace.y.slice(),
+      groupType: trace.groupType || "point",
+      groupId: trace.groupId || null,
+      groupLabel: trace.groupLabel || trace.label,
+    }));
+    const referenceBundle = getSelectedReferenceBundle(rawClickedBundles);
+    const processedMeanBundles = applyReferenceAndTraceSettings([state.lastMeanRawBundle], referenceBundle, {
+      normalize: false,
+      smoothingEnabled: false,
+      smoothWindow: els.smoothWindow.value,
+      smoothPoly: els.smoothPoly.value,
+      offsetFactor: 0,
+      applyOffset: false,
+    });
     state.meanPlotGeometry = drawPlot(
       els.meanCanvas,
-      [{ label: "Global Mean", x: meanPayload.x.slice(), y: meanPayload.mean_trace.slice() }],
+      processedMeanBundles,
       `${meanPayload.x_label} (${meanPayload.x_unit})`,
       {
         selectionGuideX,
         hoverGuideX: state.meanHoverGuide,
         rangeStart,
         rangeEnd,
+        xUnit: meanPayload.x_unit,
         view: state.meanView,
         singleColor: meanLineColorForBackground(els.spectrumBackground.value),
         backgroundName: els.spectrumBackground.value,
@@ -1397,18 +2340,25 @@ async function renderMeanAndClickedPlots() {
     els.meanSubtitle.textContent = `Mean across ${meanPayload.width} x ${meanPayload.height} pixels.`;
 
     const clickedBundles = buildClickedBundles();
-    state.clickedPlotGeometry = drawPlot(els.clickedCanvas, clickedBundles, `${meanPayload.x_label} (${meanPayload.x_unit})`, {
-      selectionGuideX,
-      hoverGuideX: state.hoverGuide,
-      rangeStart,
-      rangeEnd,
-      view: state.clickedView,
-      colorMapName: els.spectrumColorMap.value,
-      invertColormap: els.invertSpectrumColormap.checked,
-      backgroundName: els.spectrumBackground.value,
-      axisZoomDrag: state.axisZoomDrag?.target === "clicked" ? state.axisZoomDrag : null,
-    });
-    els.clickedSubtitle.textContent = clickedBundles.length ? `${clickedBundles.length} clicked spectrum(s)` : "Click on the map to add spectra.";
+    if (els.clickedViewMode.value === "heatmap") {
+      const heatmap = getClickedHeatmapData(clickedBundles);
+      state.clickedPlotGeometry = drawClickedHeatmap(els.clickedCanvas, heatmap);
+      els.clickedSubtitle.textContent = heatmap ? `${clickedBundles.length} trace(s) • heatmap • ${els.heatmapRenderMode.value}` : "Click on the map to add spectra.";
+    } else {
+      state.clickedPlotGeometry = drawPlot(els.clickedCanvas, clickedBundles, `${meanPayload.x_label} (${meanPayload.x_unit})`, {
+        selectionGuideX,
+        hoverGuideX: state.hoverGuide,
+        rangeStart,
+        rangeEnd,
+        xUnit: meanPayload.x_unit,
+        view: state.clickedView,
+        colorMapName: els.spectrumColorMap.value,
+        invertColormap: els.invertSpectrumColormap.checked,
+        backgroundName: els.spectrumBackground.value,
+        axisZoomDrag: state.axisZoomDrag?.target === "clicked" ? state.axisZoomDrag : null,
+      });
+      els.clickedSubtitle.textContent = clickedBundles.length ? `${clickedBundles.length} clicked spectrum(s)` : "Click on the map to add spectra.";
+    }
   } catch (error) {
     drawEmptyCanvas(els.meanCanvas, "Failed to render mean spectrum.");
     drawEmptyCanvas(els.clickedCanvas, "Failed to render spectra.");
@@ -1421,11 +2371,13 @@ async function renderCurrentFile() {
   const file = getSelectedFile();
   if (!file) {
     els.fileTitle.textContent = "No file selected";
-    els.fileSubtitle.textContent = "Choose a PL mapping pickle file.";
+    els.fileSubtitle.textContent = "Choose a PL mapping data file.";
+    state.lastMeanRawBundle = null;
     drawEmptyCanvas(els.imageCanvas, "No map loaded.");
     drawEmptyCanvas(els.meanCanvas, "No spectrum loaded.");
     drawEmptyCanvas(els.clickedCanvas, "No clicked spectra.");
     els.clickedList.innerHTML = "";
+    updateReferenceControls();
     return;
   }
   try {
@@ -1460,6 +2412,7 @@ async function appendClickedTrace(x, y) {
     y: payload.trace.slice(),
   });
   renderClickedList();
+  updateReferenceControls();
   renderMarkers();
   await renderMeanAndClickedPlots();
 }
@@ -1572,7 +2525,8 @@ async function selectMeanPointFromEvent(event) {
 async function uploadPickedFile(file) {
   try {
     clearError();
-    const info = await fetchJson("/api/upload-pickle", {
+    await applyLearnedImportPreset(file);
+    const uploaded = await fetchJson("/api/upload-pickle", {
       method: "POST",
       headers: {
         "Content-Type": "application/octet-stream",
@@ -1580,25 +2534,34 @@ async function uploadPickedFile(file) {
       },
       body: file,
     });
-    state.selectedFile = info;
-    state.selectedPath = info.path;
-    state.gridWidth = info.requires_manual_dimensions ? null : info.width;
-    state.gridHeight = info.requires_manual_dimensions ? null : info.height;
+    state.selectedPath = uploaded.path;
+    state.fileAnalysis = null;
+    state.selectedFile = null;
     state.clickedTraces = [];
     state.hoverGuide = null;
+    state.meanHoverGuide = null;
     state.meanView = null;
     state.clickedView = null;
-    state.selection = {
-      type: "point",
-      targetWavelength: info.min_wavelength,
-      startWavelength: info.min_wavelength,
-      endWavelength: info.min_wavelength,
-    };
-    syncSmoothDefaults(true);
+    state.gridWidth = null;
+    state.gridHeight = null;
     syncGridInputsFromState();
+    try {
+      const analysis = await fetchFileAnalysis(state.selectedPath);
+    state.fileAnalysis = analysis;
     renderSelectedFileSummary();
-    syncRangeInputs();
-    await renderCurrentFile();
+    openImportModal(analysis);
+    } catch (error) {
+      if (els.importMode.value === "manual") {
+        applyImportSettings({ importMode: "auto" });
+        setImportLearningStatus("Learned rule failed for this file. Fell back to Auto.");
+        const analysis = await fetchFileAnalysis(state.selectedPath);
+        state.fileAnalysis = analysis;
+        renderSelectedFileSummary();
+        openImportModal(analysis);
+      } else {
+        throw error;
+      }
+    }
   } catch (error) {
     showError(`File open failed:\n${error}`);
     console.error(error);
@@ -1610,10 +2573,14 @@ async function restorePreviousSession() {
   if (!saved?.selectedPath) return;
   try {
     applyTheme(saved.uiTheme || "bright");
+    state.importPresets = Array.isArray(saved.importPresets) ? saved.importPresets : [];
+    applyImportSettings(saved.importSettings || {});
     els.scanSizeX.value = saved.scanSizeX ?? els.scanSizeX.value;
     els.scanSizeY.value = saved.scanSizeY ?? els.scanSizeY.value;
     els.scanUnit.value = saved.scanUnit ?? els.scanUnit.value;
     els.imageMode.value = saved.imageMode ?? els.imageMode.value;
+    els.imageTool.value = saved.imageTool ?? "point";
+    els.lineThickness.value = saved.lineThickness ?? "1";
     els.imageLow.value = saved.imageLow ?? els.imageLow.value;
     els.imageHigh.value = saved.imageHigh ?? els.imageHigh.value;
     els.colorMap.value = saved.colorMap ?? els.colorMap.value;
@@ -1623,6 +2590,13 @@ async function restorePreviousSession() {
     els.spectrumBackground.value = saved.spectrumBackground ?? els.spectrumBackground.value;
     els.colorScale.value = saved.colorScale ?? els.colorScale.value;
     els.normalizeToggle.checked = Boolean(saved.normalizeToggle);
+    els.referenceToggle.checked = Boolean(saved.referenceToggle);
+    els.referenceSelect.value = saved.referenceSelection ?? "";
+    els.referenceOffset.value = saved.referenceOffset ?? "0";
+    els.clickedViewMode.value = saved.clickedViewMode ?? "spectra";
+    els.heatmapNormalizeAxis.value = saved.clickedHeatmapNormalizeAxis ?? "none";
+    els.heatmapRenderMode.value = "pcolormesh";
+    els.heatmapTranspose.checked = Boolean(saved.clickedHeatmapTranspose);
     els.smoothToggle.checked = Boolean(saved.smoothToggle);
     els.smoothWindow.value = saved.smoothWindow ?? "7";
     els.smoothPoly.value = saved.smoothPoly ?? "2";
@@ -1642,20 +2616,24 @@ async function restorePreviousSession() {
     syncRangeInputs();
     updateImageRangeLabel();
     updateOffsetLabel();
-    const params = new URLSearchParams({ path: state.selectedPath });
-    if (state.gridWidth && state.gridHeight) {
-      params.set("grid_width", String(state.gridWidth));
-      params.set("grid_height", String(state.gridHeight));
-    }
+    updateImageToolHint();
+    updateClickedViewControls();
     try {
-      state.selectedFile = await fetchJson(`/api/file-info?${params.toString()}`);
+      state.selectedFile = await fetchJson(buildFileInfoRequest(state.selectedPath));
+      state.fileAnalysis = state.selectedFile;
     } catch (error) {
       if (!state.selectedFile) throw error;
       showError(`Last file could not be reopened automatically:\n${error}`);
       return;
     }
+    if (!(state.gridWidth && state.gridHeight)) {
+      state.gridWidth = state.selectedFile.requires_manual_dimensions ? null : state.selectedFile.width;
+      state.gridHeight = state.selectedFile.requires_manual_dimensions ? null : state.selectedFile.height;
+    }
     syncSmoothDefaults(!saved.smoothWindow);
     state.selection = saved.selection || state.selection;
+    clampSelectionToFile(state.selectedFile);
+    syncGridInputsFromState();
     renderSelectedFileSummary();
     await renderCurrentFile();
     state.clickedTraces = [];
@@ -1674,17 +2652,82 @@ function bindEvents() {
     applyTheme(els.uiTheme.value);
     writeStoredState();
   });
-  if (els.pickFileButton) {
-    els.pickFileButton.addEventListener("click", () => {
-      els.pickFileInput.click();
+  const handleImportSettingsChange = async (resetSelection = true) => {
+    updateImportUi();
+    writeStoredState();
+    if (!state.selectedPath) return;
+    try {
+      const analysis = await fetchFileAnalysis(state.selectedPath);
+      state.fileAnalysis = analysis;
+      renderSelectedFileSummary();
+      const dims = getGridDimensions();
+      if (!dims || dims.width * dims.height !== analysis.pixel_count) {
+        openImportModal(analysis);
+        return;
+      }
+      await refreshSelectedFileFromImportSettings(resetSelection);
+      writeStoredState();
+    } catch (error) {
+      showError(`Import settings failed:\n${error}`);
+    }
+  };
+  els.importMode.addEventListener("change", async () => {
+    await handleImportSettingsChange(true);
+  });
+  els.manualFormat.addEventListener("change", async () => {
+    await handleImportSettingsChange(true);
+  });
+  for (const input of [els.importSkipRows, els.importDelimiter, els.importIndexColumn, els.importXColumn, els.importYColumn, els.importDataStartColumn]) {
+    input.addEventListener("change", async () => {
+      await handleImportSettingsChange(true);
+    });
+    input.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      await handleImportSettingsChange(true);
     });
   }
+  els.rememberImportRule.addEventListener("click", () => {
+    if (!state.currentFilePatternSignature) {
+      setImportLearningStatus("Open a file first to learn its format.");
+      return;
+    }
+    rememberImportPreset(state.currentFilePatternSignature, state.selectedFile?.name);
+    writeStoredState();
+  });
+  els.clearImportRules.addEventListener("click", () => {
+    state.importPresets = [];
+    setImportLearningStatus("Cleared learned import rules.");
+    writeStoredState();
+  });
+  els.openFileModal.addEventListener("click", () => {
+    openImportModal(state.fileAnalysis);
+  });
   els.pickFileInput.addEventListener("change", async (event) => {
     const [file] = event.target.files || [];
     if (!file) return;
     await uploadPickedFile(file);
     els.pickFileInput.value = "";
   });
+  els.modalPickFileInput.addEventListener("change", async (event) => {
+    const [file] = event.target.files || [];
+    if (!file) return;
+    openImportModal(null);
+    await uploadPickedFile(file);
+    els.modalPickFileInput.value = "";
+  });
+  els.importModalClose.addEventListener("click", () => closeImportModal());
+  els.useSuggestedDims.addEventListener("click", async () => {
+    if (!state.fileAnalysis?.suggested_width || !state.fileAnalysis?.suggested_height) return;
+    setModalDimensions(state.fileAnalysis.suggested_width, state.fileAnalysis.suggested_height);
+    await confirmImportDimensionsAndRender();
+  });
+  els.importModalOpenButton.addEventListener("click", async () => {
+    await confirmImportDimensionsAndRender();
+  });
+  for (const input of [els.modalGridWidth, els.modalGridHeight]) {
+    input.addEventListener("input", () => updateModalValidation());
+    input.addEventListener("change", () => updateModalValidation());
+  }
   els.tabViewer.addEventListener("click", () => {
     setActiveTab("viewer");
     writeStoredState();
@@ -1717,7 +2760,7 @@ function bindEvents() {
     writeStoredState();
   });
   els.imageExportPng.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-image";
+    const name = baseFileName(state.selectedFile?.name, "pl-image");
     if (!state.currentPreview) return;
     const exportCanvasEl = renderHeatmapToOffscreenCanvas(
       state.currentPreview,
@@ -1732,7 +2775,7 @@ function bindEvents() {
     exportCanvas(exportCanvasEl, `${name}-image`);
   });
   els.imageExportCsv.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-image";
+    const name = baseFileName(state.selectedFile?.name, "pl-image");
     if (!state.currentPreview) return;
     exportCsv(imagePreviewCsv(state.currentPreview), `${name}-image`);
   });
@@ -1758,11 +2801,12 @@ function bindEvents() {
     state.clickedTraces = [];
     renderClickedList();
     renderMarkers();
+    updateReferenceControls();
     await renderMeanAndClickedPlots();
     writeStoredState();
   });
   els.meanExportPng.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-mean-spectrum";
+    const name = baseFileName(state.selectedFile?.name, "pl-mean-spectrum");
     exportCanvas(els.meanCanvas, `${name}-mean-spectrum`);
   });
   els.meanExportCsv.addEventListener("click", async () => {
@@ -1771,7 +2815,7 @@ function bindEvents() {
     const payload = await loadTrace(file.path, 0, 0);
     exportCsv(
       tracesToCsv([{ label: "Global Mean", x: payload.x.slice(), y: payload.mean_trace.slice() }]),
-      `${file.name.replace(/\.pickle$/i, "")}-mean-spectrum`
+      `${baseFileName(file.name, "pl-mean-spectrum")}-mean-spectrum`
     );
   });
   els.meanCopy.addEventListener("click", async () => {
@@ -1782,7 +2826,7 @@ function bindEvents() {
     }
   });
   els.clickedExportPng.addEventListener("click", () => {
-    const name = state.selectedFile?.name?.replace(/\.pickle$/i, "") || "pl-clicked-spectra";
+    const name = baseFileName(state.selectedFile?.name, "pl-clicked-spectra");
     exportCanvas(els.clickedCanvas, `${name}-clicked-spectra`);
   });
   els.clickedExportCsv.addEventListener("click", () => {
@@ -1790,7 +2834,7 @@ function bindEvents() {
     if (!file || !state.clickedTraces.length) return;
     exportCsv(
       tracesToCsv(buildClickedBundles()),
-      `${file.name.replace(/\.pickle$/i, "")}-clicked-spectra`
+      `${baseFileName(file.name, "pl-clicked-spectra")}-clicked-spectra`
     );
   });
   els.clickedCopy.addEventListener("click", async () => {
@@ -1808,6 +2852,15 @@ function bindEvents() {
   els.imageMode.addEventListener("change", async () => {
     state.imageCache.clear();
     await renderPreview();
+    writeStoredState();
+  });
+  els.imageTool.addEventListener("change", () => {
+    updateImageToolHint();
+    writeStoredState();
+  });
+  els.lineThickness.addEventListener("change", () => {
+    sanitizeLineThickness();
+    updateImageToolHint();
     writeStoredState();
   });
   els.rangeStart.addEventListener("change", async () => {
@@ -1832,7 +2885,11 @@ function bindEvents() {
       state.imageCache.clear();
       state.traceCache.clear();
       renderSelectedFileSummary();
-      await renderCurrentFile();
+      if (state.selectedPath) {
+        await refreshSelectedFileFromImportSettings(false);
+      } else {
+        await renderCurrentFile();
+      }
       writeStoredState();
     });
   }
@@ -1897,6 +2954,35 @@ function bindEvents() {
     await renderMeanAndClickedPlots();
     writeStoredState();
   });
+  els.referenceToggle.addEventListener("change", async () => {
+    await renderMeanAndClickedPlots();
+    writeStoredState();
+  });
+  els.referenceSelect.addEventListener("change", async () => {
+    await renderMeanAndClickedPlots();
+    writeStoredState();
+  });
+  els.referenceOffset.addEventListener("change", async () => {
+    await renderMeanAndClickedPlots();
+    writeStoredState();
+  });
+  els.clickedViewMode.addEventListener("change", async () => {
+    updateClickedViewControls();
+    await renderMeanAndClickedPlots();
+    writeStoredState();
+  });
+  els.heatmapNormalizeAxis.addEventListener("change", async () => {
+    await renderMeanAndClickedPlots();
+    writeStoredState();
+  });
+  els.heatmapRenderMode.addEventListener("change", async () => {
+    await renderMeanAndClickedPlots();
+    writeStoredState();
+  });
+  els.heatmapTranspose.addEventListener("change", async () => {
+    await renderMeanAndClickedPlots();
+    writeStoredState();
+  });
   els.normalizeToggle.addEventListener("change", async () => {
     await renderMeanAndClickedPlots();
     writeStoredState();
@@ -1923,10 +3009,32 @@ function bindEvents() {
     state.clickedTraces = [];
     renderClickedList();
     renderMarkers();
+    updateReferenceControls();
     await renderMeanAndClickedPlots();
     writeStoredState();
   });
+  els.imageCanvas.addEventListener("mousedown", (event) => {
+    if (els.imageTool.value !== "line") return;
+    const pixel = getPixelFromEvent(event);
+    if (!pixel) return;
+    state.lineDrag = { start: pixel, current: pixel };
+    state.lineDragMoved = false;
+    renderMarkers();
+  });
+  els.imageCanvas.addEventListener("mousemove", (event) => {
+    if (!state.lineDrag) return;
+    const pixel = getPixelFromEvent(event);
+    if (!pixel) return;
+    state.lineDrag.current = pixel;
+    if (pixel.x !== state.lineDrag.start.x || pixel.y !== state.lineDrag.start.y) state.lineDragMoved = true;
+    renderMarkers();
+  });
+  els.imageCanvas.addEventListener("mouseleave", () => {
+    if (!state.lineDrag) return;
+    renderMarkers();
+  });
   els.imageCanvas.addEventListener("click", async (event) => {
+    if (els.imageTool.value !== "point") return;
     try {
       const pixel = getPixelFromEvent(event);
       if (!pixel) return;
@@ -1960,7 +3068,7 @@ function bindEvents() {
     const nearest = axisPositionFromCanvasEvent(event, els.meanCanvas, axisValues, state.meanPlotGeometry);
     if (!nearest) return;
     state.meanHoverGuide = nearest.value;
-    els.meanHover.textContent = `Wavelength: ${formatNumber(nearest.value, 2)} nm`;
+    els.meanHover.textContent = `${currentAxisLabel()}: ${formatNumber(nearest.value, 2)} ${currentAxisUnit()}`;
     schedulePlotRender();
     if (!state.meanDrag) return;
     if (Math.abs(nearest.index - state.meanDrag.index) > 1) state.meanDragMoved = true;
@@ -1971,6 +3079,22 @@ function bindEvents() {
     schedulePlotRender();
   });
   window.addEventListener("mouseup", async (event) => {
+    if (state.lineDrag) {
+      const drag = state.lineDrag;
+      const endPixel = getPixelFromEvent(event) || drag.current || drag.start;
+      state.lineDrag = null;
+      renderMarkers();
+      if (els.imageTool.value === "line" && state.lineDragMoved && state.selectedPath) {
+        try {
+          await appendPlLineTrace(state.selectedPath, drag.start, endPixel, sanitizeLineThickness());
+          writeStoredState();
+        } catch (error) {
+          showError(`Line trace failed:\n${error}`);
+        }
+      }
+      state.lineDragMoved = false;
+      return;
+    }
     if (state.axisZoomDrag) {
       if (state.axisZoomDrag.target === "mean") {
         state.meanView = applyAxisZoom(state.axisZoomDrag, state.meanPlotGeometry, state.meanView);
@@ -2030,7 +3154,7 @@ function bindEvents() {
     const nearest = axisPositionFromCanvasEvent(event, els.clickedCanvas, axisValues, state.clickedPlotGeometry);
     if (!nearest) return;
     state.hoverGuide = nearest.value;
-    if (els.clickedHover) els.clickedHover.textContent = `Wavelength: ${formatNumber(nearest.value, 2)} nm`;
+    if (els.clickedHover) els.clickedHover.textContent = `${currentAxisLabel()}: ${formatNumber(nearest.value, 2)} ${currentAxisUnit()}`;
     if (state.clickedDrag) {
       if (Math.abs(nearest.index - state.clickedDrag.index) > 1) state.clickedDragMoved = true;
       state.selection.type = "range";
@@ -2087,7 +3211,11 @@ function bindEvents() {
 }
 
 function init() {
-  applyTheme("bright");
+  const saved = readStoredState();
+  state.importPresets = Array.isArray(saved?.importPresets) ? saved.importPresets : [];
+  applyTheme(saved?.uiTheme || "bright");
+  applyImportSettings(saved?.importSettings || {});
+  setImportLearningStatus("");
   els.datasetMeta.textContent = "";
   clearError();
   renderSelectedFileSummary();
@@ -2095,8 +3223,10 @@ function init() {
   setActiveTab("viewer");
   updateImageRangeLabel();
   updateOffsetLabel();
+  updateImageToolHint();
+  updateClickedViewControls();
   bindEvents();
-  drawEmptyCanvas(els.imageCanvas, "Choose a pickle file.");
+  drawEmptyCanvas(els.imageCanvas, "Choose a data file.");
   drawEmptyCanvas(els.meanCanvas, "No spectrum loaded.");
   drawEmptyCanvas(els.clickedCanvas, "No clicked spectra.");
   syncGridInputsFromState();
