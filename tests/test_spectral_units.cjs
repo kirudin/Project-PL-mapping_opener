@@ -1,0 +1,23 @@
+const assert=require('node:assert/strict');
+const {spectralConvert:c,convertSpectralPayload:p}=require('../pl_mapping_static/processing.js');
+assert.ok(Math.abs(c(500,'nm','eV')-2.479683968664005)<1e-12);
+assert.equal(c(532,'nm','raman',532),0);
+assert.ok(c(600,'nm','raman',532)>0);
+assert.ok(c(500,'nm','raman',532)<0);
+for(const unit of ['nm','eV','raman','wavenumber']) for(const nm of [400,532,800]) assert.ok(Math.abs(c(c(nm,'nm',unit,532),unit,'nm',532)-nm)<1e-9);
+assert.throws(()=>c(532,'nm','raman',null),/laser/);
+assert.throws(()=>c(0,'nm','eV'),/positive/);
+const data={x:[500,600,700],trace:[3,null,9],x_unit:'nm',x_label:'Wavelength'};
+const e=p(data,'nm','eV');
+assert.ok(e.x[0]>e.x[2]);assert.deepEqual(e.trace,data.trace);assert.deepEqual(data.x,[500,600,700]);
+const r=p({min_wavelength:500,max_wavelength:700,wavelength_unit:'nm'},'nm','eV');assert.ok(r.min_wavelength<r.max_wavelength);
+assert.deepEqual(p({x:[0,1,2],x_unit:'index'},'nm','eV'),{x:[0,1,2],x_unit:'index'});
+console.log('Spectral conversion, Raman sign/laser validation, round trips, reversed axes and intensity preservation PASS');
+const fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../pl_mapping_static/app.js'),'utf8');
+function extract(name){const start=source.indexOf(`function ${name}(`);return source.slice(start,source.indexOf('\n}\n',start)+3);}
+const context=vm.createContext({state:{clickedTraces:[]},spectralSettings:{unit:'eV',laserNm:null},currentAxisLabel:()=> 'Energy',currentAxisUnit:()=> 'eV',Number,JSON});
+vm.runInContext(extract('csvEscape')+'\n'+extract('tracesToCsv'),context);
+const csv=context.tracesToCsv([{label:'mean',x:e.x,y:e.trace}],'raw-mean');
+assert.ok(csv.includes('Energy (eV)'));assert.ok(csv.includes(String(e.x[0])));assert.ok(csv.includes('intensity'));
+console.log('Spectrum CSV contains converted coordinates and conversion metadata PASS');

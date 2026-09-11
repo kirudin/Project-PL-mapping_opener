@@ -173,6 +173,44 @@ const els = {
   verticalSplitter: document.getElementById("vertical-splitter"),
 };
 
+let spectralSettings = {unit: "nm", laserNm: null};
+function nativeCoordinate(value) {
+  if (currentAxisUnit() === "index") return value;
+  return spectralConvert(value, spectralSettings.unit, "nm", spectralSettings.laserNm);
+}
+function restoreViewPreferences(saved) {
+  spectralSettings = saved?.spectralSettings || {unit:"nm",laserNm:null};
+  document.getElementById("spectral-unit").value = spectralSettings.unit;
+  document.getElementById("laser-nm").value = spectralSettings.laserNm || "";
+  document.getElementById("image-panel-width").value = saved?.imagePanelWidth || 55;
+  document.getElementById("image-panel-height").value = saved?.imagePanelHeight || 480;
+  applyPanelLayout();
+}
+function applyPanelLayout() {
+  const width = Math.max(30,Math.min(75,Number(document.getElementById("image-panel-width").value)||55));
+  const height = Math.max(240,Math.min(1200,Number(document.getElementById("image-panel-height").value)||480));
+  document.getElementById("viewer-stack").style.setProperty("--image-share",width+"%");
+  els.imageStage.style.height = height+"px";
+}
+async function changeSpectralUnits() {
+  try {
+    const next={unit:document.getElementById("spectral-unit").value,laserNm:Number(document.getElementById("laser-nm").value)||null};
+    if (next.unit === 'raman') spectralConvert(500,'nm','raman',next.laserNm);
+    if (currentAxisUnit()==='index' && next.unit!=='nm') throw new Error('Channel-index data need wavelength calibration before conversion.');
+    if (currentAxisUnit() === "index") {spectralSettings=next;return;}
+    const reproject = value => spectralConvert(spectralConvert(value,spectralSettings.unit,'nm',spectralSettings.laserNm),'nm',next.unit,next.laserNm);
+    const payload = value => value && convertSpectralPayload(convertSpectralPayload(value,spectralSettings.unit,'nm',spectralSettings.laserNm),'nm',next.unit,next.laserNm);
+    const selection=state.selectedFile ? Object.fromEntries(Object.entries(state.selection).map(([k,v])=>[k,k==='type'?v:reproject(v)])) : state.selection;
+    const traces=state.clickedTraces.map(t=>({...t,x:t.x.map(reproject)}));
+    const info=payload(state.selectedFile),analysis=payload(state.fileAnalysis);
+    spectralSettings=next; state.selection=selection; state.clickedTraces=traces;
+    state.selectedFile=info;state.fileAnalysis=analysis;
+    if (selection.startWavelength>selection.endWavelength) [selection.startWavelength,selection.endWavelength]=[selection.endWavelength,selection.startWavelength];
+    state.imageCache.clear();state.traceCache.clear();state.meanView=null;state.clickedView=null;state.meanHoverGuide=null;state.hoverGuide=null;
+    clearError();syncRangeInputs(); await renderPreview();await renderMeanAndClickedPlots();writeStoredState();
+  } catch(error) {showError(error.message);}
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -185,7 +223,10 @@ async function fetchJson(url, options = {}) {
     }
     throw new Error(message || `HTTP ${response.status}`);
   }
-  return response.json();
+  const payload = await response.json();
+  if (/^\/api\/(file-info|file-analysis|pl-image|pl-trace|pl-line-trace)\?/.test(url))
+    return convertSpectralPayload(payload,"nm",spectralSettings.unit,spectralSettings.laserNm);
+  return payload;
 }
 
 function showError(message) {
@@ -351,7 +392,10 @@ function sessionSnapshot() {
   return {
     schema_version: 3,
     saved_at_ms: Date.now(),
-    app_version: "0.3.4",
+    spectralSettings,
+    imagePanelWidth: document.getElementById("image-panel-width").value,
+    imagePanelHeight: Math.round(els.imageStage.offsetHeight),
+    app_version: "0.4.0",
     clickedTraces: state.clickedTraces,
     selectedPath: state.selectedPath,
     selectedFile: state.selectedFile,
@@ -439,6 +483,8 @@ function applyTheme(theme) {
   const safeTheme = ["bright", "dark", "skyblue", "rosered", "twilight"].includes(theme) ? theme : "bright";
   document.body.dataset.theme = safeTheme;
   els.uiTheme.value = safeTheme;
+  const defaults={bright:['viridis','turbo','white'],dark:['inferno','plasma','night'],skyblue:['viridis','cool','white'],rosered:['magma','plasma','white'],twilight:['plasma','magma','slate']}[safeTheme];
+  [els.colorMap.value,els.spectrumColorMap.value,els.spectrumBackground.value]=defaults;
 }
 
 function setActiveTab(tab) {
@@ -523,6 +569,11 @@ function csvEscape(value) {
   return text;
 }
 
+function plotCanvasWidth(canvas) {
+  const parent=canvas.parentElement;
+  const style=getComputedStyle(parent);
+  return Math.max(240,parent.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight));
+}
 function setCanvasSize(canvas, width, height) {
   const ratio = window.devicePixelRatio || 1;
   canvas.width = Math.round(width * ratio);
@@ -875,7 +926,7 @@ function effectiveQuantileLimits(preview, lowPercent, highPercent) {
 }
 
 function drawEmptyCanvas(canvas, message) {
-  const width = canvas.clientWidth || 960;
+  const width = plotCanvasWidth(canvas);
   const height = canvas.clientHeight || 280;
   const ctx = setCanvasSize(canvas, width, height);
   const [bgTop, bgBottom] = plotBackgroundStops("night");
@@ -905,8 +956,9 @@ function renderHeatmapToCanvas(
 ) {
   const ctx = setCanvasSize(canvas, width, height);
   const bg = ctx.createLinearGradient(0, 0, 0, height);
-  bg.addColorStop(0, "#182434");
-  bg.addColorStop(1, "#0a1422");
+  const stops=plotBackgroundStops(els.spectrumBackground.value === "transparent" ? "white" : els.spectrumBackground.value);
+  bg.addColorStop(0, stops[0]);
+  bg.addColorStop(1, stops[1]);
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, width, height);
 
@@ -1169,7 +1221,7 @@ function getClickedHeatmapData(bundles) {
 }
 
 function drawClickedHeatmap(canvas, heatmap) {
-  const width = canvas.clientWidth || 960;
+  const width = plotCanvasWidth(canvas);
   const height = canvas.clientHeight || 420;
   const ctx = setCanvasSize(canvas, width, height);
   const [bgTop, bgBottom] = plotBackgroundStops(els.spectrumBackground.value);
@@ -1251,8 +1303,8 @@ function drawClickedHeatmap(canvas, heatmap) {
 }
 
 function drawPlot(canvas, bundles, xLabel, options = {}) {
-  const width = canvas.clientWidth || 960;
-  const height = canvas.clientHeight || 280;
+  const width = plotCanvasWidth(canvas);
+  const height = canvas === els.meanCanvas ? (window.innerWidth <= 1100 ? 360 : els.imageStage.clientHeight) : canvas.clientHeight || 280;
   const ctx = setCanvasSize(canvas, width, height);
   const padding = { top: 20, right: 24, bottom: 48, left: 62 };
 
@@ -1503,17 +1555,19 @@ function syncGridInputsFromState() {
 }
 
 function syncRangeInputs() {
-  els.rangeStart.value = formatNumber(state.selection.startWavelength, 2);
-  els.rangeEnd.value = formatNumber(state.selection.endWavelength, 2);
+  els.rangeStart.value = formatNumber(state.selection.startWavelength, 6);
+  els.rangeEnd.value = formatNumber(state.selection.endWavelength, 6);
   updateRangeLabel();
 }
 
 function updateRangeLabel() {
   const unit = currentAxisUnit();
+  document.querySelector('label[for="range-start"]').textContent = `Range Start (${unit})`;
+  document.querySelector('label[for="range-end"]').textContent = `Range End (${unit})`;
   if (state.selection.type === "point") {
     els.rangeLabel.textContent = `Point: ${formatNumber(state.selection.targetWavelength, 2)} ${unit}`;
   } else {
-    els.rangeLabel.textContent = `Range: ${formatNumber(state.selection.startWavelength, 2)} - ${formatNumber(state.selection.endWavelength, 2)} ${unit}`;
+    els.rangeLabel.textContent = `Range: ${formatNumber(state.selection.startWavelength, 6)} - ${formatNumber(state.selection.endWavelength, 6)} ${unit}`;
   }
 }
 
@@ -1748,7 +1802,7 @@ function currentImageSummary() {
   const selectionText =
     state.selection.type === "point"
       ? `${formatNumber(state.selection.targetWavelength, 2)} ${unit}`
-      : `${formatNumber(state.selection.startWavelength, 2)}-${formatNumber(state.selection.endWavelength, 2)} ${unit}`;
+      : `${formatNumber(state.selection.startWavelength, 6)}-${formatNumber(state.selection.endWavelength, 6)} ${unit}`;
   return {
     title: state.selectedFile.name,
     subtitle: `${width} x ${height} px • ${modeText} • ${selectionText}`,
@@ -1761,7 +1815,7 @@ function tracesToCsv(bundles, kind = "processed-clicked") {
   const lineOnly = bundles.every((bundle) => bundle.groupType === "line");
   const length = bundles[0].x.length;
   const header = [`${currentAxisLabel()} (${currentAxisUnit()})`, ...bundles.map((bundle) => bundle.exportLabel || bundle.label)];
-  const metadata = {app_version: "0.3.4", kind, source: state.selectedFile?.name, source_signature: state.selectedFile?.source_signature, unit: currentAxisUnit(), missing: "empty cell", processing: kind === "raw-mean" ? [] : {reference: els.referenceToggle.checked ? els.referenceSelect.value : null, reference_offset: Number(els.referenceOffset.value), invalid_reference: "abs(denominator)<1e-12 or missing -> missing", smoothing: els.smoothToggle.checked ? {window: Number(els.smoothWindow.value), polynomial: Number(els.smoothPoly.value), domain: "channel index"} : null, normalization: els.normalizeToggle.checked ? "min-max" : null, display_offset: false}, selections: kind === "raw-mean" ? [] : state.clickedTraces.map(({x,y,...meta}) => meta)};
+  const metadata = {app_version: "0.4.0", kind, source: state.selectedFile?.name, source_signature: state.selectedFile?.source_signature, unit: currentAxisUnit(), spectral_conversion: {...spectralSettings, source_unit:"nm", intensity:"unchanged per measured channel; no Jacobian"}, missing: "empty cell", processing: kind === "raw-mean" ? [] : {reference: els.referenceToggle.checked ? els.referenceSelect.value : null, reference_offset: Number(els.referenceOffset.value), invalid_reference: "abs(denominator)<1e-12 or missing -> missing", smoothing: els.smoothToggle.checked ? {window: Number(els.smoothWindow.value), polynomial: Number(els.smoothPoly.value), domain: "channel index"} : null, normalization: els.normalizeToggle.checked ? "min-max" : null, display_offset: false}, selections: kind === "raw-mean" ? [] : state.clickedTraces.map(({x,y,...meta}) => meta)};
   const rows = ["# " + JSON.stringify(metadata), header.map(csvEscape).join(",")];
   if (lineOnly) {
     rows.push(["pixel_coordinate", ...bundles.map((bundle) => `(${bundle.pixelX}, ${bundle.pixelY})`)].map(csvEscape).join(","));
@@ -1848,9 +1902,9 @@ function buildImageRequest(path) {
     path,
     mode: els.imageMode.value,
     selection: state.selection.type,
-    target_wavelength: String(state.selection.targetWavelength),
-    start_wavelength: String(state.selection.startWavelength),
-    end_wavelength: String(state.selection.endWavelength),
+    target_wavelength: String(nativeCoordinate(state.selection.targetWavelength)),
+    start_wavelength: String(nativeCoordinate(state.selection.startWavelength)),
+    end_wavelength: String(nativeCoordinate(state.selection.endWavelength)),
   });
   const dims = getGridDimensions();
   if (dims) {
@@ -2162,7 +2216,7 @@ async function renderPreview() {
     els.imageCanvas,
     payload,
     Math.max(320, els.imageStage.clientWidth - 2),
-    Math.max(420, Math.round((els.imageStage.clientWidth - 2) * 0.7)),
+    Math.max(240, els.imageStage.clientHeight),
     els.imageLow.value,
     els.imageHigh.value,
     autoLimits.min,
@@ -2565,6 +2619,7 @@ async function restorePreviousSession(provided = null) {
   }
   state.restoring = true;
   try {
+    restoreViewPreferences(saved);
     applyTheme(saved.uiTheme || "bright");
     state.importPresets = Array.isArray(saved.importPresets) ? saved.importPresets : [];
     applyImportSettings(saved.importSettings || {});
@@ -2659,6 +2714,13 @@ async function restorePreviousSession(provided = null) {
 }
 
 function bindEvents() {
+  document.getElementById("apply-spectral-unit").addEventListener("click",changeSpectralUnits);
+  for (const id of ["image-panel-width","image-panel-height"]) document.getElementById(id).addEventListener("input",()=>{applyPanelLayout();});
+  let resizeTimer;
+  new ResizeObserver(()=>{
+    clearTimeout(resizeTimer);
+    resizeTimer=setTimeout(()=>{document.getElementById("image-panel-height").value=Math.round(els.imageStage.offsetHeight);document.getElementById("viewer-stack").style.setProperty("--plot-height",Math.round(els.imageStage.offsetHeight)+"px");renderPreview().catch(()=>{});schedulePlotRender();if(state.selectedFile && !state.restoring && !state.fileImportBusy) writeStoredState();},120);
+  }).observe(els.imageStage);
   document.getElementById("auto-contrast").addEventListener("click", async () => { state.manualColorLimits = false; await renderPreview(); writeStoredState(); });
   document.getElementById("session-save").addEventListener("click", () => {
     const payload = sessionSnapshot();
@@ -2689,6 +2751,7 @@ function bindEvents() {
 
   els.uiTheme.addEventListener("change", () => {
     applyTheme(els.uiTheme.value);
+    renderPreview().catch(e=>showError(e.message));schedulePlotRender();
     writeStoredState();
   });
   const handleImportSettingsChange = async (resetSelection = true) => {
@@ -3281,6 +3344,7 @@ function bindEvents() {
 
 function init() {
   const saved = readStoredState();
+  restoreViewPreferences(saved);
   state.importPresets = Array.isArray(saved?.importPresets) ? saved.importPresets : [];
   applyTheme(saved?.uiTheme || "bright");
   applyImportSettings(saved?.importSettings || {});

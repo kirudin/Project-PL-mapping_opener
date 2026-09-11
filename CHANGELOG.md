@@ -6,6 +6,16 @@
   in the existing public repository at the user's request.
 - Existing binary releases and their historical tags remain unchanged.
 
+## 0.4.0 — 2026-09-11
+
+- Display nm-calibrated spectra in nm, eV, Raman shift or wavenumber; require an
+  excitation wavelength for Raman shift. Preserve measured-channel intensity and
+  channel ordering, inverse-map selections to original nm, and annotate spectrum CSV.
+- Move file opening to the top and appearance/update controls to the bottom.
+- Add image width share and height controls, vertical frame resizing, responsive
+  plot reflow, and theme-specific default image/spectrum palettes and backgrounds.
+- Persist axis/laser/layout preferences with sessions; preserve existing trace samples.
+
 ## 0.3.4 — 2026-09-11
 
 - Keep pixel recommendation metadata when opening and restoring a file; reopening

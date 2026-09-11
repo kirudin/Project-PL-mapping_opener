@@ -2,6 +2,7 @@ import sys, tempfile, unittest, json
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from unittest.mock import Mock
+from runtime_paths import APP_VERSION
 from update_checker import version_key, select_release, check_updates, RELEASES_URL
 
 def release(tag, preview=False, **extra):
@@ -20,14 +21,14 @@ class UpdateTests(unittest.TestCase):
         for tag in ['0.3.0','0.3.1']:
             self.assertFalse(select_release([release(tag)],current='0.3.1')['update_available'])
     def test_newer_link_is_constructed_not_trusted(self):
-        result=select_release([release('0.4.0',html_url='https://evil.example/')])
+        result=select_release([release('0.4.0',html_url='https://evil.example/')],current='0.3.1')
         self.assertTrue(result['update_available'])
         self.assertEqual(result['release_url'],RELEASES_URL+'/tag/0.4.0')
     def test_no_release(self):
         self.assertEqual(select_release([])['status'],'no_release')
     def test_daily_persistent_cache_manual_check(self):
         with tempfile.TemporaryDirectory() as d:
-            path=Path(d)/'cache.json';fetch=Mock(return_value=[release('0.4.0')])
+            path=Path(d)/'cache.json';fetch=Mock(return_value=[release(f'{int(APP_VERSION.split(".")[0])+1}.0.0')])
             self.assertTrue(check_updates(now=100,cache_path=path,fetcher=fetch)['update_available'])
             self.assertTrue(check_updates(now=200,cache_path=path,fetcher=fetch)['cached'])
             self.assertEqual(fetch.call_count,1)

@@ -1,4 +1,4 @@
-# Developer handoff — 0.3.4
+# Developer handoff — 0.4.0
 
 ## Scope and source
 
@@ -59,3 +59,9 @@ NPZ-only smoke tests do not cover pickle's dynamic imports. Never text-parse fai
 .pickle/.pkl inputs. First pandas initialization can take several seconds.
 
 Keep state.fileAnalysis from /api/file-analysis: /api/file-info does not contain the suggested dimensions or factor candidates. File import errors must be visible inside the modal. Run node tests/test_import_feedback.cjs after changing this workflow.
+
+Spectral display conversion lives in processing.js. API axes and image export remain
+original nm; fetchJson converts analysis/image/trace response coordinates and
+buildImageRequest inverses display selections. Never reorder intensity without its
+coordinate; no density Jacobian is applied. Session spectralSettings identifies stored
+trace/selection coordinate units. Tests: node tests/test_spectral_units.cjs.

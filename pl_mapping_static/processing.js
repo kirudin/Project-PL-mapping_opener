@@ -88,3 +88,42 @@ function applyReferenceDivision(yValues, referenceValues, referenceOffset) {
 
 
 if (typeof module !== "undefined") module.exports = {normalizeSeries, smoothSeries, applyReferenceDivision};
+
+// Exact SI h*c/e expressed in eV nm. Intensity remains counts per measured channel.
+const SPECTRAL_HC = 1239.8419843320026;
+function spectralConvert(value, from, to, laserNm) {
+  if (!Number.isFinite(value)) throw new Error('Spectral coordinates must be finite.');
+  if (from === to) return value;
+  if ((from === 'raman' || to === 'raman') && !(Number.isFinite(laserNm) && laserNm > 0))
+    throw new Error('Enter the excitation laser wavelength in nm for Raman shift.');
+  let nm;
+  if (from === 'nm') nm = value;
+  else if (from === 'eV') nm = SPECTRAL_HC / value;
+  else if (from === 'wavenumber') nm = 1e7 / value;
+  else if (from === 'raman') nm = 1e7 / (1e7 / laserNm - value);
+  else throw new Error('Uncalibrated channel indices cannot be converted to physical units.');
+  if (!(Number.isFinite(nm) && nm > 0)) throw new Error('The coordinate does not represent a positive wavelength.');
+  if (to === 'nm') return nm;
+  if (to === 'eV') return SPECTRAL_HC / nm;
+  if (to === 'wavenumber') return 1e7 / nm;
+  if (to === 'raman') return 1e7 / laserNm - 1e7 / nm;
+  throw new Error('Unknown spectral unit.');
+}
+function spectralLabel(unit) {
+  return {nm:['Wavelength','nm'],eV:['Energy','eV'],raman:['Raman shift','cm⁻¹'],wavenumber:['Wavenumber','cm⁻¹']}[unit];
+}
+function convertSpectralPayload(payload, from, to, laserNm) {
+  if (!payload || (payload.wavelength_unit || payload.x_unit) === 'index') return payload;
+  const out = {...payload};
+  const convert = value => spectralConvert(value, from, to, laserNm);
+  for (const key of ['x','wavelengths']) if (Array.isArray(out[key])) out[key] = out[key].map(convert);
+  for (const key of ['min_wavelength','max_wavelength','target_wavelength','range_start_wavelength','range_end_wavelength'])
+    if (Number.isFinite(out[key])) out[key] = convert(out[key]);
+  for (const [a,b] of [['min_wavelength','max_wavelength'],['range_start_wavelength','range_end_wavelength']])
+    if (Number.isFinite(out[a]) && Number.isFinite(out[b]) && out[a] > out[b]) [out[a],out[b]]=[out[b],out[a]];
+  const [label,unit] = spectralLabel(to);
+  if ('wavelength_unit' in out) {out.wavelength_unit=unit;out.wavelength_axis_label=label;}
+  if ('x_unit' in out) {out.x_unit=unit;out.x_label=label;}
+  return out;
+}
+if (typeof module !== 'undefined') Object.assign(module.exports,{spectralConvert,convertSpectralPayload});

@@ -96,3 +96,18 @@ Tests use temporary paths and synthetic data; user measurements were not changed
   recovery. Python suite 23 passed; processing/update Node suites passed.
 - These findings do not identify the user's exact failing file, whose path/version
   has not been provided. Do not claim every pickle or their specific failure is resolved.
+
+## 0.4.0 units, layout and palettes — 2026-09-11
+
+- Pure conversion tests: known 500 nm energy, round trips across all four units, Raman
+  zero/Stokes/anti-Stokes and missing-laser checks, descending energy axis, preserved
+  intensities, unchanged index axes, converted CSV coordinates/metadata passed.
+- Python 23 regressions and Node processing/import-feedback/update suites passed.
+- Actual browser file chooser loaded a 150x50, 1600-channel measurement pickle. Changed
+  nm to eV to Raman (532 nm excitation): same starting channel displayed 612.52 nm,
+  2.02 eV, 2470.87 cm⁻¹. Missing laser produced a visible validation error.
+- Dark theme selected Inferno image palette and night spectrum background. Image height
+  control resized the stage; mean plot follows stage height. Axis/laser restored after reload.
+- Browser viewport controls are scaled in this environment: measured CSS widths 2149
+  and 1014 px showed two columns and one column respectively, without document overflow.
+- No Windows build or clean-download Gatekeeper verification; macOS remains ad-hoc signed.

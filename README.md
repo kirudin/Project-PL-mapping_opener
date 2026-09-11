@@ -1,6 +1,6 @@
 # PL Mapping Viewer
 
-Version: 0.3.4 — 2026-09-11
+Version: 0.4.0 — 2026-09-11
 
 Local PL map and spectrum analysis. This release establishes a shared macOS/Windows
 source and corrects data/export/session behavior before extending analysis features.
@@ -88,3 +88,17 @@ to fail. Pickle failures now report their cause without retrying binary data as 
 For packaging verification, run `python tests/smoke_binary_pickle.py /path/to/executable`
 with NumPy/pandas installed in the test interpreter. This uploads synthetic legacy
 pickles into temporary app storage and checks pixel analysis and map generation.
+
+### Spectrum units and layout (0.4.0)
+
+Use Spectrum & Layout to select nm, eV, Raman shift (cm⁻¹), or wavenumber (cm⁻¹),
+then Apply axis units. Source numeric axes are still interpreted as nm; uncalibrated
+channel indices cannot be converted into physical units. Raman shift requires the
+actual excitation laser wavelength in nm. Positive shift is Stokes, negative is anti-Stokes.
+Intensity remains per measured channel: no Jacobian/spectral-density conversion or
+resampling is applied. Spectrum CSV uses the selected coordinate and includes conversion
+metadata; full-resolution image ZIP records its underlying original nm selection.
+Image panel width (%) and height (px) controls resize the layout. The image frame also
+has a vertical resize handle. Narrow windows stack the image and mean spectrum.
+Changing UI Theme applies matching default graph/map palettes and backgrounds; individual
+colormap controls remain available afterward. Settings are saved in the session.

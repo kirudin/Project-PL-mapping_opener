@@ -4,36 +4,99 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PL Mapping Viewer</title>
-    <link rel="stylesheet" href="/styles.css?v=0.3.4" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.0" />
   </head>
   <body>
     <div class="shell">
       <aside class="sidebar">
+        <div class="panel compact-panel">
+          <div class="section-head">
+            <h2>File</h2>
+          </div>
+          <button id="open-file-modal" type="button">Open Data File</button>
+          <input id="pick-file-input" type="file" hidden />
+          <label for="import-mode">Import Mode</label>
+          <select id="import-mode">
+            <option value="auto">Auto</option>
+            <option value="manual">Manual</option>
+          </select>
+          <div id="manual-import-settings" class="manual-import-settings" hidden>
+            <div class="range-grid">
+              <div>
+                <label for="manual-format">Format</label>
+                <select id="manual-format">
+                  <option value="index-columns">Index + Pixel Columns</option>
+                  <option value="xy-spectra">X/Y + Spectra Columns</option>
+                </select>
+              </div>
+              <div>
+                <label for="import-skip-rows">Skip Rows</label>
+                <input id="import-skip-rows" type="number" min="0" step="1" value="0" />
+              </div>
+            </div>
+            <div class="range-grid">
+              <div>
+                <label for="import-delimiter">Delimiter</label>
+                <select id="import-delimiter">
+                  <option value="auto">Auto</option>
+                  <option value="comma">Comma</option>
+                  <option value="tab">Tab</option>
+                  <option value="space">Space</option>
+                  <option value="semicolon">Semicolon</option>
+                </select>
+              </div>
+              <div>
+                <label for="import-data-start-column">Data Start Col</label>
+                <input id="import-data-start-column" type="number" min="0" step="1" value="1" />
+              </div>
+            </div>
+            <div id="manual-index-columns" class="range-grid">
+              <div>
+                <label for="import-index-column">Index Column</label>
+                <input id="import-index-column" type="number" min="0" step="1" value="0" />
+              </div>
+            </div>
+            <div id="manual-xy-columns" class="range-grid" hidden>
+              <div>
+                <label for="import-x-column">X Column</label>
+                <input id="import-x-column" type="number" min="0" step="1" value="0" />
+              </div>
+              <div>
+                <label for="import-y-column">Y Column</label>
+                <input id="import-y-column" type="number" min="0" step="1" value="1" />
+              </div>
+            </div>
+            <div class="panel-actions import-actions">
+              <button id="remember-import-rule" type="button">Remember Rule</button>
+              <button id="clear-import-rules" type="button">Clear Rules</button>
+            </div>
+            <p class="muted import-help">Auto가 실패하면 행 건너뛰기, 구분자, 컬럼 역할을 직접 지정하세요.</p>
+            <p id="import-learning-status" class="muted import-help"></p>
+          </div>
+          <p id="browser-path" class="muted">No file selected.</p>
+          <div id="file-list" class="file-list empty">Choose a data file from Finder.</div>
+        </div>
         <div class="panel">
           <h1>PL Mapping Viewer</h1>
           <p class="meta-line">Creator: Hwi Je Woo</p>
-          <p class="meta-line">Version: 0.3.4</p>
+          <p class="meta-line">Version: 0.4.0</p>
           <p class="meta-line">Created: 2026-03-10 KST</p>
-          <section class="update-panel" aria-label="Application updates">
-            <button id="check-updates" type="button">Check for updates</button>
-            <label><input id="auto-updates" type="checkbox" checked /> Check once daily</label>
-            <label><input id="preview-updates" type="checkbox" checked /> Include preview releases</label>
-            <p id="update-status" role="status" aria-live="polite">Updates are checked on GitHub. No automatic installation.</p>
-            <a id="release-link" href="https://github.com/kirudin/Project-PL-mapping_opener/releases" target="_blank" rel="noopener noreferrer">Open releases</a>
-          </section>
-          <label for="ui-theme">UI Theme</label>
-          <select id="ui-theme">
-            <option value="bright">Bright</option>
-            <option value="dark">Dark</option>
-            <option value="skyblue">Skyblue</option>
-            <option value="rosered">Rosered</option>
-            <option value="twilight">Twilight</option>
-          </select>
           <div class="session-controls"><button id="session-save" type="button">Save session</button><button id="reload-source" type="button">Reload source</button><label for="session-load">Open session JSON</label><input id="session-load" type="file" accept=".json" /></div>
           <p id="dataset-meta" class="muted"></p>
           <p id="app-error" class="error-text" hidden></p>
         </div>
 
+        <div class="panel">
+          <h2>Spectrum &amp; Layout</h2>
+          <label for="spectral-unit">Spectrum axis</label>
+          <select id="spectral-unit"><option value="nm">Wavelength (nm)</option><option value="eV">Energy (eV)</option><option value="raman">Raman shift (cm⁻¹)</option><option value="wavenumber">Wavenumber (cm⁻¹)</option></select>
+          <label for="laser-nm">Excitation laser (nm)</label><input id="laser-nm" type="number" min="0.001" step="any" placeholder="Required for Raman shift" />
+          <button id="apply-spectral-unit" type="button">Apply axis units</button>
+          <p class="muted">Source numeric axis: nm. Channel-index data require wavelength calibration. Conversion changes coordinates, not intensity per channel.</p>
+          <label for="image-panel-width">Image panel width (%)</label><input id="image-panel-width" type="range" min="30" max="75" value="55" />
+          <label for="image-panel-height">Image height (px)</label><input id="image-panel-height" type="number" min="240" max="1200" step="20" value="480" />
+          <p class="muted">Drag the image frame’s bottom edge to resize. Panels stack on narrow screens.</p>
+        </div>
         <div class="panel">
           <div class="section-head">
             <h2>Image</h2>
@@ -185,72 +248,21 @@
           <p class="muted">Mean spectrum에서 클릭하면 단일 파장, 드래그하면 범위를 선택합니다.</p>
         </div>
 
-        <div class="panel compact-panel">
-          <div class="section-head">
-            <h2>File</h2>
-          </div>
-          <button id="open-file-modal" type="button">Open Data File</button>
-          <input id="pick-file-input" type="file" hidden />
-          <label for="import-mode">Import Mode</label>
-          <select id="import-mode">
-            <option value="auto">Auto</option>
-            <option value="manual">Manual</option>
+        <div class="panel"><h2>Appearance &amp; Updates</h2>          <section class="update-panel" aria-label="Application updates">
+            <button id="check-updates" type="button">Check for updates</button>
+            <label><input id="auto-updates" type="checkbox" checked /> Check once daily</label>
+            <label><input id="preview-updates" type="checkbox" checked /> Include preview releases</label>
+            <p id="update-status" role="status" aria-live="polite">Updates are checked on GitHub. No automatic installation.</p>
+            <a id="release-link" href="https://github.com/kirudin/Project-PL-mapping_opener/releases" target="_blank" rel="noopener noreferrer">Open releases</a>
+          </section>
+          <label for="ui-theme">UI Theme</label>
+          <select id="ui-theme">
+            <option value="bright">Bright</option>
+            <option value="dark">Dark</option>
+            <option value="skyblue">Skyblue</option>
+            <option value="rosered">Rosered</option>
+            <option value="twilight">Twilight</option>
           </select>
-          <div id="manual-import-settings" class="manual-import-settings" hidden>
-            <div class="range-grid">
-              <div>
-                <label for="manual-format">Format</label>
-                <select id="manual-format">
-                  <option value="index-columns">Index + Pixel Columns</option>
-                  <option value="xy-spectra">X/Y + Spectra Columns</option>
-                </select>
-              </div>
-              <div>
-                <label for="import-skip-rows">Skip Rows</label>
-                <input id="import-skip-rows" type="number" min="0" step="1" value="0" />
-              </div>
-            </div>
-            <div class="range-grid">
-              <div>
-                <label for="import-delimiter">Delimiter</label>
-                <select id="import-delimiter">
-                  <option value="auto">Auto</option>
-                  <option value="comma">Comma</option>
-                  <option value="tab">Tab</option>
-                  <option value="space">Space</option>
-                  <option value="semicolon">Semicolon</option>
-                </select>
-              </div>
-              <div>
-                <label for="import-data-start-column">Data Start Col</label>
-                <input id="import-data-start-column" type="number" min="0" step="1" value="1" />
-              </div>
-            </div>
-            <div id="manual-index-columns" class="range-grid">
-              <div>
-                <label for="import-index-column">Index Column</label>
-                <input id="import-index-column" type="number" min="0" step="1" value="0" />
-              </div>
-            </div>
-            <div id="manual-xy-columns" class="range-grid" hidden>
-              <div>
-                <label for="import-x-column">X Column</label>
-                <input id="import-x-column" type="number" min="0" step="1" value="0" />
-              </div>
-              <div>
-                <label for="import-y-column">Y Column</label>
-                <input id="import-y-column" type="number" min="0" step="1" value="1" />
-              </div>
-            </div>
-            <div class="panel-actions import-actions">
-              <button id="remember-import-rule" type="button">Remember Rule</button>
-              <button id="clear-import-rules" type="button">Clear Rules</button>
-            </div>
-            <p class="muted import-help">Auto가 실패하면 행 건너뛰기, 구분자, 컬럼 역할을 직접 지정하세요.</p>
-            <p id="import-learning-status" class="muted import-help"></p>
-          </div>
-          <p id="browser-path" class="muted">No file selected.</p>
-          <div id="file-list" class="file-list empty">Choose a data file from Finder.</div>
         </div>
       </aside>
 
@@ -493,8 +505,8 @@
       </div>
     </div>
 
-    <script src="/updates.js?v=0.3.4"></script>
-    <script src="/processing.js?v=0.3.4"></script>
-    <script src="/app.js?v=0.3.4"></script>
+    <script src="/updates.js?v=0.4.0"></script>
+    <script src="/processing.js?v=0.4.0"></script>
+    <script src="/app.js?v=0.4.0"></script>
   </body>
 </html>
