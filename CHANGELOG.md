@@ -6,6 +6,14 @@
   in the existing public repository at the user's request.
 - Existing binary releases and their historical tags remain unchanged.
 
+## 0.3.3 — 2026-09-11
+
+- Include NumPy 1.x compatibility modules in frozen builds so existing pickle files
+  reach pixel-count recommendations and map rendering.
+- Preserve pickle load errors; do not retry .pkl/.pickle binary data as a text table.
+- Encode upload filenames so Korean/non-ASCII filenames can pass HTTP headers.
+- Add frozen-binary tests for legacy numeric/multiarray pickles and pandas DataFrames.
+
 ## 0.3.2 — 2026-09-11
 
 - macOS now uses a one-file console executable, matching TMM packaging, instead of

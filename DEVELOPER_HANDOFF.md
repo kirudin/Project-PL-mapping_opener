@@ -1,4 +1,4 @@
-# Developer handoff — 0.3.2
+# Developer handoff — 0.3.3
 
 ## Scope and source
 
@@ -52,3 +52,8 @@ publish only within user authorization. Build artifacts do not imply source secr
 `update_checker.py` implements read-only public release lookup; `updates.js` owns independent status and browser-origin preferences. Cache is separate from sessions. Preview builds default to checking prereleases. Tests inject release data and isolated cache files; do not fabricate remote releases to test notifications.
 
 macOS builds use --onefile console packaging; Windows retains --onedir. Release staging is separate from dist/<OS>. No Developer ID signing identity is installed; do not claim notarization or a verified number of Gatekeeper prompts.
+
+Frozen pickle support requires numpy.core compatibility modules even though current
+NumPy imports numpy._core. Run tests/smoke_binary_pickle.py against release binaries;
+NPZ-only smoke tests do not cover pickle's dynamic imports. Never text-parse failed
+.pickle/.pkl inputs. First pandas initialization can take several seconds.

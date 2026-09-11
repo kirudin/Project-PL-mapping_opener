@@ -1,6 +1,6 @@
 # PL Mapping Viewer
 
-Version: 0.3.2 — 2026-09-11
+Version: 0.3.3 — 2026-09-11
 
 Local PL map and spectrum analysis. This release establishes a shared macOS/Windows
 source and corrects data/export/session behavior before extending analysis features.
@@ -79,3 +79,12 @@ build approach. macOS builds are ad-hoc signed, not Developer ID signed or notar
 initial macOS approval can still be required. Browser-download Gatekeeper behavior
 has not been verified on a clean Mac. No security settings are changed by the launcher.
 Saved sessions/uploads remain in the existing application data folder.
+
+### Pickle compatibility fix (0.3.3)
+
+Use v0.3.3 or newer for existing NumPy/pandas pickle measurements. Earlier binaries
+omitted NumPy 1.x compatibility modules, causing file analysis/pixel recommendations
+to fail. Pickle failures now report their cause without retrying binary data as text.
+For packaging verification, run `python tests/smoke_binary_pickle.py /path/to/executable`
+with NumPy/pandas installed in the test interpreter. This uploads synthetic legacy
+pickles into temporary app storage and checks pixel analysis and map generation.

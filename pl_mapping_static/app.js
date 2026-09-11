@@ -332,7 +332,7 @@ function sessionSnapshot() {
   return {
     schema_version: 3,
     saved_at_ms: Date.now(),
-    app_version: "0.3.2",
+    app_version: "0.3.3",
     clickedTraces: state.clickedTraces,
     selectedPath: state.selectedPath,
     selectedFile: state.selectedFile,
@@ -1741,7 +1741,7 @@ function tracesToCsv(bundles, kind = "processed-clicked") {
   const lineOnly = bundles.every((bundle) => bundle.groupType === "line");
   const length = bundles[0].x.length;
   const header = [`${currentAxisLabel()} (${currentAxisUnit()})`, ...bundles.map((bundle) => bundle.exportLabel || bundle.label)];
-  const metadata = {app_version: "0.3.2", kind, source: state.selectedFile?.name, source_signature: state.selectedFile?.source_signature, unit: currentAxisUnit(), missing: "empty cell", processing: kind === "raw-mean" ? [] : {reference: els.referenceToggle.checked ? els.referenceSelect.value : null, reference_offset: Number(els.referenceOffset.value), invalid_reference: "abs(denominator)<1e-12 or missing -> missing", smoothing: els.smoothToggle.checked ? {window: Number(els.smoothWindow.value), polynomial: Number(els.smoothPoly.value), domain: "channel index"} : null, normalization: els.normalizeToggle.checked ? "min-max" : null, display_offset: false}, selections: kind === "raw-mean" ? [] : state.clickedTraces.map(({x,y,...meta}) => meta)};
+  const metadata = {app_version: "0.3.3", kind, source: state.selectedFile?.name, source_signature: state.selectedFile?.source_signature, unit: currentAxisUnit(), missing: "empty cell", processing: kind === "raw-mean" ? [] : {reference: els.referenceToggle.checked ? els.referenceSelect.value : null, reference_offset: Number(els.referenceOffset.value), invalid_reference: "abs(denominator)<1e-12 or missing -> missing", smoothing: els.smoothToggle.checked ? {window: Number(els.smoothWindow.value), polynomial: Number(els.smoothPoly.value), domain: "channel index"} : null, normalization: els.normalizeToggle.checked ? "min-max" : null, display_offset: false}, selections: kind === "raw-mean" ? [] : state.clickedTraces.map(({x,y,...meta}) => meta)};
   const rows = ["# " + JSON.stringify(metadata), header.map(csvEscape).join(",")];
   if (lineOnly) {
     rows.push(["pixel_coordinate", ...bundles.map((bundle) => `(${bundle.pixelX}, ${bundle.pixelY})`)].map(csvEscape).join(","));
@@ -2484,7 +2484,7 @@ async function uploadPickedFile(file) {
       method: "POST",
       headers: {
         "Content-Type": "application/octet-stream",
-        "X-Filename": file.name,
+        "X-Filename": encodeURIComponent(file.name),
       },
       body: file,
     });

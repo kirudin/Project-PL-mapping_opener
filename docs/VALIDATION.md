@@ -67,3 +67,17 @@ Tests use temporary paths and synthetic data; user measurements were not changed
 - Previous local package checks did not reproduce browser-download quarantine. User
   reported v0.3.1 _internal/Python blocked by macOS. Packaging now follows TMM onefile,
   but clean-Mac downloaded Gatekeeper approval count remains unverified. Windows not tested.
+
+## 0.3.3 pickle compatibility — 2026-09-11
+
+- Reproduced v0.3.2 frozen failure: ModuleNotFoundError for numpy.core.numeric while
+  source Python read the same local pickle successfully. Text fallback obscured this error.
+- Python suite: 23 passed; Node processing and update-message suites passed.
+- Fixed binary: four existing local measurement pickles (DataFrame and viewer-ready dict,
+  1600 channels, 6400/7500 pixels) all passed file analysis and full-size map generation.
+  Files were read-only and were not included in source or release assets.
+- Synthetic frozen smoke: legacy numpy.core.numeric, numpy.core.multiarray and pandas
+  DataFrame pickle uploads passed analysis and map generation, including encoded Korean
+  filename. Browser page version 0.3.3 loaded; Finder file-picker interaction not repeated.
+- macOS onefile packaging retained; Apple notarization and clean downloaded Gatekeeper
+  behavior remain unverified. Windows remains untested.

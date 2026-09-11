@@ -717,6 +717,8 @@ def load_mapping_source(path: Path, options: ImportOptions | None = None) -> obj
         with path.open("rb") as handle:
             return pickle.load(handle)
     except Exception as pickle_error:
+        if suffix in {".pkl", ".pickle"}:
+            raise TypeError(f"Could not read pickle {path.name}: {type(pickle_error).__name__}: {pickle_error}") from pickle_error
         try:
             return try_read_text_table()
         except Exception as csv_error:

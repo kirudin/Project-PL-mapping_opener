@@ -26,6 +26,15 @@ class RegressionTests(unittest.TestCase):
         np.savez(self.path, data=data, wavelengths=[500., 510., 520.], width=3, height=2)
     def image(self, **kwargs):
         return app.parse_pl_image(self.path, 'sum', 'range', 500., 500., 520., **OPTIONS, **kwargs)
+    def test_pickle_failure_preserves_cause_without_text_fallback(self):
+        from unittest.mock import patch
+        path = UPLOAD_DIR / 'broken.pickle'
+        path.write_bytes(b'not a pickle')
+        with patch('pandas.read_csv', side_effect=AssertionError('Unexpected text fallback')) as read_csv:
+            with self.assertRaisesRegex(TypeError, 'Could not read pickle.*UnpicklingError'):
+                app.load_mapping_source(path)
+            read_csv.assert_not_called()
+
     def test_rectangle_and_range(self):
         trace = app.parse_pl_trace(self.path, 2, 1, **OPTIONS)
         self.assertEqual(trace['trace'], [5,11,17])

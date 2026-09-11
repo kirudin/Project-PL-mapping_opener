@@ -17,6 +17,7 @@ def main():
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile" if sys.platform == "darwin" else "--onedir", "--console", "--name", name,
                "--distpath", str(ROOT / "dist" / platform.system()), "--workpath", str(ROOT / "build/pyinstaller"), "--specpath", str(ROOT / "build"),
                "--add-data", str(ROOT / "pl_mapping_static") + (";" if sys.platform == "win32" else ":") + "pl_mapping_static",
+               "--collect-submodules", "numpy.core",
                "--exclude-module", "matplotlib", "--exclude-module", "scipy", "--exclude-module", "IPython", "--exclude-module", "tkinter",
                str(ROOT / "pl_mapping_viewer.py")]
     subprocess.run(command, cwd=ROOT, check=True)
