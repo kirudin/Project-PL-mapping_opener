@@ -1,40 +1,18 @@
 #!/bin/bash
 set -euo pipefail
-
-PROJECT_DIR="/Users/hwijewoo/Desktop/Project-PL mapping_opener"
-SCRIPT_PATH="$PROJECT_DIR/pl_mapping_viewer.py"
-
-choose_python() {
-  if command -v python3 >/dev/null 2>&1; then
-    if python3 -c "import pandas" >/dev/null 2>&1; then
-      command -v python3
-      return
-    fi
-  fi
-
-  if [ -x /opt/anaconda3/bin/python3 ]; then
-    if /opt/anaconda3/bin/python3 -c "import pandas" >/dev/null 2>&1; then
-      echo /opt/anaconda3/bin/python3
-      return
-    fi
-  fi
-
-  if [ -x /opt/homebrew/bin/python3 ]; then
-    if /opt/homebrew/bin/python3 -c "import pandas" >/dev/null 2>&1; then
-      echo /opt/homebrew/bin/python3
-      return
-    fi
-  fi
-
-  echo ""
-}
-
-PYTHON_BIN="$(choose_python)"
-
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$PROJECT_DIR"
+PYTHON_BIN="${PL_MAPPING_PYTHON:-}"
 if [ -z "$PYTHON_BIN" ]; then
-  osascript -e 'display alert "PL Mapping Viewer" message "No Python with pandas was found. Install pandas or run with /opt/anaconda3/bin/python3." as critical'
+  for candidate in "$PROJECT_DIR/.venv/bin/python3" "$(command -v python3 || true)" /opt/anaconda3/bin/python3; do
+    if [ -x "$candidate" ] && "$candidate" -c 'import numpy, pandas, certifi' >/dev/null 2>&1; then
+      PYTHON_BIN="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$PYTHON_BIN" ]; then
+  echo "Install Python dependencies: python3 -m pip install -r requirements.txt"
   exit 1
 fi
-
-cd "$PROJECT_DIR"
-exec "$PYTHON_BIN" "$SCRIPT_PATH"
+exec "$PYTHON_BIN" "$PROJECT_DIR/pl_mapping_viewer.py" "$@"

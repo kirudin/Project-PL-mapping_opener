@@ -1,0 +1,57 @@
+# Validation — 0.3.0, 2026-09-11
+
+## Verified
+
+- Python regression suite: 13 tests passed on macOS. Cases cover rectangular pixel
+  indexing, range sums, all-missing masks, band extraction, same-path replacement,
+  full-resolution export values and axes, spectral-axis rejection, atomic session
+  persistence, stale-write ordering, HTTP routes, foreign-origin writes and port conflict.
+- Node processing regressions passed: reference zero/missing masking, min-max missing
+  handling, known quadratic smoothing, display offsets excluded from exported values.
+- JavaScript syntax, source shell launcher syntax, and git diff whitespace check passed.
+- Source launcher opened the local server using PL_MAPPING_DATA_HOME in an isolated test directory.
+- Browser: loaded synthetic 12x8 map (61 wavelengths), confirmed dimensions, clicked a
+  pixel, extracted a 3-pixel-thick line with six samples, switched to heatmap, reloaded.
+  Seven total traces and the line group remained; persisted spectra, thickness and distances
+  were inspected in the session. No console errors in that workflow.
+- Browser DOM layout check at actual 1023 CSS-pixel width: zero document horizontal overflow
+  and no element extending past the right edge after the responsive fix.
+- Map CSV button was exercised without a displayed error. The in-app browser did not
+  expose a download event; final filesystem arrival through that browser is unverified.
+  ZIP bytes, CSV values and metadata were independently downloaded/read through HTTP.
+- macOS arm64 PyInstaller ZIP: 25,980,448 bytes, 162 files. Extracted using macOS ditto
+  outside the source tree and launched the executable with an isolated user-data folder.
+  Verified packaged app version, file upload, 12x8 map with missing pixel, CSV/metadata ZIP,
+  and session + retained upload after terminating and restarting the executable.
+- ZIP did not contain app Python source files, tests, measurement folders or analysis outputs.
+  Frontend resources and compiled Python are part of the bundle; packaging does not
+  guarantee source secrecy.
+
+## Not verified / remaining
+
+- Windows build/run on Windows hardware; x86_64 macOS; code signing/notarization.
+- External publication or repository visibility changes (not performed).
+- Collaborator hardware and real instrument data format coverage.
+- Browser PNG/clipboard downloads and pixel-perfect figure layout. Map PNG still exports
+  a preview without a complete scientific figure frame.
+- Large-dataset performance, multi-tab conflicts beyond timestamp ordering, and all UI edge cases.
+- ROI, background subtraction, peak analysis, batch processing and physical-axis conversion
+  are future analysis milestones, not part of the completed foundation release.
+
+Tests use temporary paths and synthetic data; user measurements were not changed.
+
+## 0.3.1 update-check validation — 2026-09-11
+
+- All 22 Python tests and Node processing/update-message tests passed. New cases cover
+  numeric/prerelease ordering, channel filtering, stale/offline data, cache persistence,
+  retries, manual throttling and release URL construction.
+- Real GitHub source lookup returned the published v0.3.0 preview. Browser confirmed
+  the installed/newest comparison and no-release status with stable-only filtering.
+- Isolated synthetic cache fixture v0.4.0 produced the new-version notification and
+  release URL in the browser; fixture was replaced with real GitHub data afterward.
+- Release link was clicked; opening an external target was not observable in the in-app
+  tab inventory. Link href and target were verified.
+- Rebuilt macOS arm64 ZIP (26,119,637 bytes, 165 files) was extracted outside the source
+  tree. Binary HTTPS update lookup succeeded with bundled certificate roots. Upload,
+  missing-value map, full CSV ZIP and session/upload preservation across restart passed.
+- No Windows or Intel Mac validation was performed.

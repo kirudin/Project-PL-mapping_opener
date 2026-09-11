@@ -974,3 +974,22 @@ canvas {
     overflow-x: auto;
   }
 }
+
+/* Keep stored canvas dimensions from imposing an intrinsic minimum page width. */
+.main, .panel, .content-grid, .stack-column, .plot-card, .viewer-stack {
+  min-width: 0;
+}
+canvas { max-width: 100%; }
+.clicked-toolbar, .trace-controls, .trace-settings { flex-wrap: wrap; }
+.session-controls { display: grid; gap: 4px; }
+.session-controls input { max-width: 100%; }
+@media (max-width: 1080px) {
+  .compact-hero-main { white-space: normal; overflow-wrap: anywhere; }
+  .clicked-toolbar { flex-wrap: wrap; }
+}
+.update-panel { margin: 12px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.update-panel label { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.update-panel input { width: auto; margin: 0; }
+.update-panel p { font-size: 12px; line-height: 1.5; }
+.update-panel a { color: var(--accent); font-size: 13px; }
+.update-panel .update-available { font-weight: 600; color: var(--accent); }

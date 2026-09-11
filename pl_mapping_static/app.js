@@ -1,4 +1,8 @@
 const state = {
+  restoring: false,
+  previewRequest: 0,
+  manualColorLimits: false,
+  plotRequest: 0,
   selectedFile: null,
   fileAnalysis: null,
   selectedPath: null,
@@ -186,6 +190,7 @@ function clearError() {
 }
 
 function formatNumber(value, digits = 2) {
+  if (Number.isFinite(value) && value !== 0 && Math.abs(value) < 10 ** (-digits)) return value.toExponential(2);
   if (!Number.isFinite(value)) return "-";
   return Number(value).toFixed(digits);
 }
@@ -323,8 +328,12 @@ function readStoredState() {
   }
 }
 
-function writeStoredState() {
-  const payload = {
+function sessionSnapshot() {
+  return {
+    schema_version: 3,
+    saved_at_ms: Date.now(),
+    app_version: "0.3.1",
+    clickedTraces: state.clickedTraces,
     selectedPath: state.selectedPath,
     selectedFile: state.selectedFile,
     importPresets: state.importPresets,
@@ -338,6 +347,9 @@ function writeStoredState() {
     imageMode: els.imageMode.value,
     imageTool: els.imageTool.value,
     lineThickness: els.lineThickness.value,
+    manualColorLimits: state.manualColorLimits,
+    imageLowValue: els.imageLowValue.value,
+    imageHighValue: els.imageHighValue.value,
     imageLow: els.imageLow.value,
     imageHigh: els.imageHigh.value,
     uiTheme: els.uiTheme.value,
@@ -365,7 +377,18 @@ function writeStoredState() {
     activeTab: state.activeTab,
     multiSnapshots: state.multiSnapshots,
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+}
+
+let sessionTimer;
+let sessionWrites = Promise.resolve();
+function persistSession(payload) {
+  sessionWrites = sessionWrites.then(() => fetchJson("/api/session", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)})).catch(error => showError(`Session save failed: ${error.message}`));
+  return sessionWrites;
+}
+function writeStoredState() {
+  if (state.restoring) return;
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => persistSession(sessionSnapshot()), 250);
 }
 
 function clearStoredState() {
@@ -807,7 +830,8 @@ function resolveColorLimits(preview, lowPercent, highPercent, actualMinRaw, actu
 }
 
 function quantileColorLimits(preview, lowerQ = 0.0005, upperQ = 0.995) {
-  const sorted = [...preview.values].sort((a, b) => a - b);
+  const sorted = preview.values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return {min: 0, max: 1, label: "No finite values"};
   const pick = (q) => {
     const index = Math.max(0, Math.min(sorted.length - 1, Math.round((sorted.length - 1) * q)));
     return sorted[index];
@@ -873,9 +897,13 @@ function renderHeatmapToCanvas(
   const limits = resolveColorLimits(preview, lowPercent, highPercent, actualMinRaw, actualMaxRaw);
   const dataMin = limits.min;
   const dataMax = limits.max;
-  const range = Math.max(1e-12, dataMax - dataMin);
+  const range = dataMax > dataMin ? dataMax - dataMin : 1;
 
   for (let index = 0; index < preview.values.length; index += 1) {
+    if (!Number.isFinite(preview.values[index])) {
+      image.data.set([128, 128, 128, 255], index * 4);
+      continue;
+    }
     const clipped = Math.max(dataMin, Math.min(dataMax, preview.values[index]));
     const normalized = (clipped - dataMin) / range;
     const transformed = transformColorScale(normalized, colorScaleMode);
@@ -906,8 +934,12 @@ function renderHeatmapToOffscreenCanvas(preview, lowPercent, highPercent, actual
   const limits = resolveColorLimits(preview, lowPercent, highPercent, actualMinRaw, actualMaxRaw);
   const dataMin = limits.min;
   const dataMax = limits.max;
-  const range = Math.max(1e-12, dataMax - dataMin);
+  const range = dataMax > dataMin ? dataMax - dataMin : 1;
   for (let index = 0; index < preview.values.length; index += 1) {
+    if (!Number.isFinite(preview.values[index])) {
+      image.data.set([128, 128, 128, 255], index * 4);
+      continue;
+    }
     const clipped = Math.max(dataMin, Math.min(dataMax, preview.values[index]));
     const normalized = (clipped - dataMin) / range;
     const transformed = transformColorScale(normalized, colorScaleMode);
@@ -922,73 +954,7 @@ function renderHeatmapToOffscreenCanvas(preview, lowPercent, highPercent, actual
   return canvas;
 }
 
-function normalizeSeries(values) {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = Math.max(1e-12, max - min);
-  return values.map((value) => (value - min) / range);
-}
-
-function solveLinearSystem(matrix, vector) {
-  const size = vector.length;
-  const a = matrix.map((row, rowIndex) => [...row, vector[rowIndex]]);
-  for (let pivot = 0; pivot < size; pivot += 1) {
-    let maxRow = pivot;
-    for (let row = pivot + 1; row < size; row += 1) {
-      if (Math.abs(a[row][pivot]) > Math.abs(a[maxRow][pivot])) maxRow = row;
-    }
-    if (Math.abs(a[maxRow][pivot]) < 1e-12) return null;
-    if (maxRow !== pivot) [a[pivot], a[maxRow]] = [a[maxRow], a[pivot]];
-    const pivotValue = a[pivot][pivot];
-    for (let col = pivot; col <= size; col += 1) a[pivot][col] /= pivotValue;
-    for (let row = 0; row < size; row += 1) {
-      if (row === pivot) continue;
-      const factor = a[row][pivot];
-      for (let col = pivot; col <= size; col += 1) a[row][col] -= factor * a[pivot][col];
-    }
-  }
-  return a.map((row) => row[size]);
-}
-
-function smoothSeries(values, rawWindow, rawPoly) {
-  const length = values.length;
-  let windowSize = Number(rawWindow);
-  let polyOrder = Number(rawPoly);
-  if (!Number.isInteger(windowSize)) windowSize = 7;
-  if (!Number.isInteger(polyOrder)) polyOrder = 2;
-  if (windowSize < 3) windowSize = 3;
-  if (windowSize > length) windowSize = length;
-  polyOrder = Math.max(1, Math.min(polyOrder, windowSize - 1));
-  if (windowSize < 3 || windowSize <= polyOrder || windowSize > length) return values.slice();
-
-  const half = Math.floor(windowSize / 2);
-  const degreeCount = polyOrder + 1;
-  const output = new Array(length);
-
-  for (let center = 0; center < length; center += 1) {
-    const start = Math.max(0, Math.min(length - windowSize, center - half));
-    const xtx = Array.from({ length: degreeCount }, () => Array(degreeCount).fill(0));
-    const xty = Array(degreeCount).fill(0);
-
-    for (let localIndex = 0; localIndex < windowSize; localIndex += 1) {
-      const sourceIndex = start + localIndex;
-      const x = sourceIndex - center;
-      const powers = Array(degreeCount).fill(1);
-      for (let power = 1; power < degreeCount; power += 1) powers[power] = powers[power - 1] * x;
-      for (let row = 0; row < degreeCount; row += 1) {
-        xty[row] += powers[row] * values[sourceIndex];
-        for (let col = 0; col < degreeCount; col += 1) xtx[row][col] += powers[row] * powers[col];
-      }
-    }
-
-    const coefficients = solveLinearSystem(xtx, xty);
-    output[center] = coefficients ? coefficients[0] : values[center];
-  }
-
-  return output;
-}
-
-function buildClickedBundles() {
+function buildClickedBundles(forExport = false) {
   const normalize = els.normalizeToggle.checked;
   const smoothingEnabled = els.smoothToggle.checked;
   const smoothWindow = els.smoothWindow.value;
@@ -1014,28 +980,12 @@ function buildClickedBundles() {
     smoothWindow,
     smoothPoly,
     offsetFactor,
-    applyOffset: true,
+    applyOffset: !forExport,
   });
   return processed.map((bundle, index) => ({
     ...bundle,
     strokeColor: clickedTraceColor(index, processed.length),
   }));
-}
-
-function safeReferenceDenominator(value) {
-  if (Math.abs(value) < 1e-12) return value < 0 ? -1e-12 : 1e-12;
-  return value;
-}
-
-function applyReferenceDivision(yValues, referenceValues, referenceOffset) {
-  const length = Math.min(yValues.length, referenceValues.length);
-  const offset = Number(referenceOffset) || 0;
-  const output = new Array(length);
-  for (let index = 0; index < length; index += 1) {
-    const denominator = safeReferenceDenominator((referenceValues[index] ?? 0) + offset);
-    output[index] = (yValues[index] ?? 0) / denominator;
-  }
-  return output;
 }
 
 function averageReferenceFromGroup(groupId, rawBundles) {
@@ -1044,11 +994,10 @@ function averageReferenceFromGroup(groupId, rawBundles) {
   const minLen = Math.min(...group.map((bundle) => Math.min(bundle.x.length, bundle.y.length)));
   if (minLen < 1) return null;
   const x = group[0].x.slice(0, minLen);
-  const y = new Array(minLen).fill(0);
-  for (const bundle of group) {
-    for (let index = 0; index < minLen; index += 1) y[index] += bundle.y[index];
-  }
-  for (let index = 0; index < minLen; index += 1) y[index] /= group.length;
+  const y = Array.from({length: minLen}, (_, i) => {
+    const values = group.map(b => b.y[i]).filter(Number.isFinite);
+    return values.length ? values.reduce((a,b) => a+b, 0) / values.length : null;
+  });
   return { label: group[0].groupLabel || "Line", x, y };
 }
 
@@ -1082,8 +1031,9 @@ function applyReferenceAndTraceSettings(rawBundles, referenceBundle, options = {
     if (smoothingEnabled) yValues = smoothSeries(yValues, smoothWindow, smoothPoly);
     if (normalize) yValues = normalizeSeries(yValues);
     if (applyOffset) {
-      const localRange = Math.max(1e-12, Math.max(...yValues) - Math.min(...yValues));
-      yValues = yValues.map((value) => value + index * localRange * offsetFactor);
+      const finite = yValues.filter(Number.isFinite);
+      const localRange = finite.length ? Math.max(1e-12, Math.max(...finite) - Math.min(...finite)) : 1;
+      yValues = yValues.map((value) => Number.isFinite(value) ? value + index * localRange * offsetFactor : null);
     }
     return {
       ...bundle,
@@ -1230,10 +1180,10 @@ function drawClickedHeatmap(canvas, heatmap) {
   const stats = getNestedFiniteMinMax(heatmap.zRows);
   const zMin = stats.min;
   const zRange = Math.max(1e-12, stats.max - stats.min);
-  const xMin = xEdges[0];
-  const xMax = xEdges[xEdges.length - 1];
-  const yMin = yEdges[0];
-  const yMax = yEdges[yEdges.length - 1];
+  const xMin = Math.min(...xEdges);
+  const xMax = Math.max(...xEdges);
+  const yMin = Math.min(...yEdges);
+  const yMax = Math.max(...yEdges);
   const mapX = (value) => padding.left + ((value - xMin) / Math.max(1e-12, xMax - xMin)) * innerWidth;
   const mapY = (value) => padding.top + innerHeight - ((value - yMin) / Math.max(1e-12, yMax - yMin)) * innerHeight;
 
@@ -1248,7 +1198,7 @@ function drawClickedHeatmap(canvas, heatmap) {
       const right = mapX(xEdges[colIndex + 1]);
       const top = mapY(yEdges[rowIndex + 1]);
       const bottom = mapY(yEdges[rowIndex]);
-      ctx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+      ctx.fillRect(Math.min(left, right), Math.min(top, bottom), Math.max(1, Math.abs(right - left)), Math.max(1, Math.abs(bottom - top)));
     }
   }
 
@@ -1317,6 +1267,7 @@ function drawPlot(canvas, bundles, xLabel, options = {}) {
       xMax = Math.max(xMax, value);
     });
     bundle.y.forEach((value) => {
+      if (!Number.isFinite(value)) return;
       yMin = Math.min(yMin, value);
       yMax = Math.max(yMax, value);
     });
@@ -1369,11 +1320,14 @@ function drawPlot(canvas, bundles, xLabel, options = {}) {
       options.singleColor ||
       colorToCss(mapColorByName(options.colorMapName || "turbo", t, Boolean(options.invertColormap)));
     ctx.beginPath();
+    let connected = false;
     bundle.x.forEach((xValue, pointIndex) => {
+      if (!Number.isFinite(xValue) || !Number.isFinite(bundle.y[pointIndex])) { connected = false; return; }
       const px = mapX(xValue);
       const py = mapY(bundle.y[pointIndex]);
-      if (pointIndex === 0) ctx.moveTo(px, py);
+      if (!connected) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
+      connected = true;
     });
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = 1.6;
@@ -1488,8 +1442,8 @@ function updateImageRangeLabel() {
 function updateActualColorInputs(preview) {
   if (!preview) return;
   const limits = effectiveQuantileLimits(preview, els.imageLow.value, els.imageHigh.value);
-  els.imageLowValue.value = String(Number(limits.min.toFixed(6)));
-  els.imageHighValue.value = String(Number(limits.max.toFixed(6)));
+  els.imageLowValue.value = String(limits.min);
+  els.imageHighValue.value = String(limits.max);
 }
 
 function updateOffsetLabel() {
@@ -1714,6 +1668,7 @@ async function confirmImportDimensionsAndRender() {
 }
 
 function resetSelectionFromFile(file) {
+  state.manualColorLimits = false;
   const anchor = Number.isFinite(file?.min_wavelength) ? file.min_wavelength : 0;
   state.selection = {
     type: "point",
@@ -1781,23 +1736,13 @@ function currentImageSummary() {
   };
 }
 
-function imagePreviewCsv(preview) {
-  const rows = ["x,y,value"];
-  for (let y = 0; y < preview.height; y += 1) {
-    for (let x = 0; x < preview.width; x += 1) {
-      const value = preview.values[y * preview.width + x];
-      rows.push(`${x},${y},${value}`);
-    }
-  }
-  return rows.join("\n");
-}
-
-function tracesToCsv(bundles) {
+function tracesToCsv(bundles, kind = "processed-clicked") {
   if (!bundles.length) return "wavelength";
   const lineOnly = bundles.every((bundle) => bundle.groupType === "line");
   const length = bundles[0].x.length;
-  const header = ["wavelength", ...bundles.map((bundle) => bundle.exportLabel || bundle.label)];
-  const rows = [header.map(csvEscape).join(",")];
+  const header = [`${currentAxisLabel()} (${currentAxisUnit()})`, ...bundles.map((bundle) => bundle.exportLabel || bundle.label)];
+  const metadata = {app_version: "0.3.1", kind, source: state.selectedFile?.name, source_signature: state.selectedFile?.source_signature, unit: currentAxisUnit(), missing: "empty cell", processing: kind === "raw-mean" ? [] : {reference: els.referenceToggle.checked ? els.referenceSelect.value : null, reference_offset: Number(els.referenceOffset.value), invalid_reference: "abs(denominator)<1e-12 or missing -> missing", smoothing: els.smoothToggle.checked ? {window: Number(els.smoothWindow.value), polynomial: Number(els.smoothPoly.value), domain: "channel index"} : null, normalization: els.normalizeToggle.checked ? "min-max" : null, display_offset: false}, selections: kind === "raw-mean" ? [] : state.clickedTraces.map(({x,y,...meta}) => meta)};
+  const rows = ["# " + JSON.stringify(metadata), header.map(csvEscape).join(",")];
   if (lineOnly) {
     rows.push(["pixel_coordinate", ...bundles.map((bundle) => `(${bundle.pixelX}, ${bundle.pixelY})`)].map(csvEscape).join(","));
     rows.push(["distance_px", ...bundles.map((bundle) => formatNumber(bundle.lineDistancePixels, 4))].map(csvEscape).join(","));
@@ -1932,7 +1877,9 @@ async function fetchImagePayload(path) {
   const dims = getGridDimensions();
   const key = `${path}::${dims?.width || "auto"}::${dims?.height || "auto"}::${els.imageMode.value}::${state.selection.type}::${state.selection.targetWavelength}::${state.selection.startWavelength}::${state.selection.endWavelength}`;
   if (state.imageCache.has(key)) return state.imageCache.get(key);
-  const payload = await fetchJson(buildImageRequest(path));
+  const requestUrl = buildImageRequest(path);
+  const payload = await fetchJson(requestUrl);
+  payload.requestUrl = requestUrl;
   state.imageCache.set(key, payload);
   return payload;
 }
@@ -2052,16 +1999,11 @@ async function getPlLineTracePayload(path, start, end, options = {}) {
   });
   const shared = getImportQueryParams();
   shared.forEach((value, key) => params.set(key, value));
-  try {
-    return await fetchJson(`/api/pl-line-trace?${params.toString()}`);
-  } catch (error) {
-    console.warn("Falling back to sampled per-pixel line extraction", error);
-    return fetchSampledPlLineFallback(path, start, end, 96);
-  }
+  return await fetchJson(`/api/pl-line-trace?${params.toString()}`);
 }
 
 function buildPlLineTraceItems(payload) {
-  const traces = sampleLineTraceItems(Array.isArray(payload?.traces) ? payload.traces : [], 96);
+  const traces = Array.isArray(payload?.traces) ? payload.traces : [];
   const groupId = `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const groupLabel = `Line (${payload.start_x}, ${payload.start_y}) → (${payload.end_x}, ${payload.end_y})`;
   const calibration = getSpatialCalibration(payload.width, payload.height);
@@ -2078,6 +2020,10 @@ function buildPlLineTraceItems(payload) {
       exportLabel: distanceLabel,
       groupId,
       groupType: "line",
+      lineStart: {x: payload.start_x, y: payload.start_y},
+      lineEnd: {x: payload.end_x, y: payload.end_y},
+      thickness: payload.thickness,
+      averageCount: trace.average_count,
       groupLabel,
       pixelX: trace.pixel_x,
       pixelY: trace.pixel_y,
@@ -2092,10 +2038,10 @@ function buildPlLineTraceItems(payload) {
 
 async function appendPlLineTrace(path, start, end, thickness = 1) {
   const payload = await getPlLineTracePayload(path, start, end, { thickness });
+  if (path !== state.selectedPath) return;
   const items = buildPlLineTraceItems(payload);
   if (!items.length) return;
   for (const item of items) {
-    state.clickedTraces = state.clickedTraces.filter((entry) => entry.label !== item.label);
     state.clickedTraces.push(item);
   }
   renderClickedList();
@@ -2125,8 +2071,8 @@ function getPixelFromEvent(event) {
   const relX = (localX - layout.drawLeft) / Math.max(1, layout.drawWidth);
   const relY = (localY - layout.drawTop) / Math.max(1, layout.drawHeight);
   if (relX < 0 || relX > 1 || relY < 0 || relY > 1) return null;
-  const x = Math.max(0, Math.min(preview.source_width - 1, Math.round(relX * (preview.source_width - 1))));
-  const y = Math.max(0, Math.min(preview.source_height - 1, Math.round(relY * (preview.source_height - 1))));
+  const x = Math.max(0, Math.min(preview.source_width - 1, Math.floor(Math.min(preview.width - 1, Math.floor(relX * preview.width)) * preview.source_width / preview.width)));
+  const y = Math.max(0, Math.min(preview.source_height - 1, Math.floor(Math.min(preview.height - 1, Math.floor(relY * preview.height)) * preview.source_height / preview.height)));
   return { x, y };
 }
 
@@ -2170,6 +2116,7 @@ function renderMarkers() {
 }
 
 async function renderPreview() {
+  const requestId = ++state.previewRequest;
   const file = getSelectedFile();
   if (!file) return;
   if (file.requires_manual_dimensions && !getGridDimensions()) {
@@ -2180,10 +2127,11 @@ async function renderPreview() {
   }
   try {
     const payload = await fetchImagePayload(state.selectedPath);
+    if (requestId !== state.previewRequest || file.path !== state.selectedPath) return;
     state.currentPreview = payload;
-    const autoLimits = effectiveQuantileLimits(payload, els.imageLow.value, els.imageHigh.value);
-    els.imageLowValue.value = String(Number(autoLimits.min.toFixed(6)));
-    els.imageHighValue.value = String(Number(autoLimits.max.toFixed(6)));
+    const autoLimits = state.manualColorLimits ? resolveColorLimits(payload, els.imageLow.value, els.imageHigh.value, els.imageLowValue.value, els.imageHighValue.value) : effectiveQuantileLimits(payload, els.imageLow.value, els.imageHigh.value);
+    els.imageLowValue.value = String(autoLimits.min);
+    els.imageHighValue.value = String(autoLimits.max);
     els.imageTitle.textContent = file.name;
     if (payload.selection === "range") {
       els.imageSubtitle.textContent = `${payload.mode === "mean" ? "Range mean" : "Range sum"} • ${formatNumber(payload.range_start_wavelength, 2)} - ${formatNumber(payload.range_end_wavelength, 2)} ${payload.wavelength_unit}`;
@@ -2206,6 +2154,8 @@ async function renderPreview() {
   updateImageRangeLabel();
   renderMarkers();
   } catch (error) {
+    if (requestId !== state.previewRequest) return;
+    state.currentPreview = null;
     drawEmptyCanvas(els.imageCanvas, "Failed to render image.");
     showError(`Image render failed:\n${error}`);
     throw error;
@@ -2292,10 +2242,12 @@ function schedulePlotRender() {
 }
 
 async function renderMeanAndClickedPlots() {
+  const requestId = ++state.plotRequest;
   const file = getSelectedFile();
   if (!file) return;
   try {
     const meanPayload = await loadTrace(file.path, 0, 0);
+    if (requestId !== state.plotRequest || file.path !== state.selectedPath) return;
     state.lastMeanRawBundle = {
       label: "Global Mean",
       x: meanPayload.x.slice(),
@@ -2360,6 +2312,7 @@ async function renderMeanAndClickedPlots() {
       els.clickedSubtitle.textContent = clickedBundles.length ? `${clickedBundles.length} clicked spectrum(s)` : "Click on the map to add spectra.";
     }
   } catch (error) {
+    if (requestId !== state.plotRequest) return;
     drawEmptyCanvas(els.meanCanvas, "Failed to render mean spectrum.");
     drawEmptyCanvas(els.clickedCanvas, "Failed to render spectra.");
     showError(`Spectrum render failed:\n${error}`);
@@ -2402,6 +2355,7 @@ async function appendClickedTrace(x, y) {
   const file = getSelectedFile();
   if (!file) return;
   const payload = await loadTrace(file.path, x, y);
+  if (file.path !== state.selectedPath) return;
   const label = `(${payload.pixel_x}, ${payload.pixel_y})`;
   state.clickedTraces = state.clickedTraces.filter((item) => item.label !== label);
   state.clickedTraces.push({
@@ -2568,9 +2522,13 @@ async function uploadPickedFile(file) {
   }
 }
 
-async function restorePreviousSession() {
-  const saved = readStoredState();
-  if (!saved?.selectedPath) return;
+async function restorePreviousSession(provided = null) {
+  const saved = provided || await fetchJson("/api/session").catch(() => null) || readStoredState();
+  if (!saved?.selectedPath) {
+    if (!provided && readStoredState()?.selectedPath) return restorePreviousSession(readStoredState());
+    return;
+  }
+  state.restoring = true;
   try {
     applyTheme(saved.uiTheme || "bright");
     state.importPresets = Array.isArray(saved.importPresets) ? saved.importPresets : [];
@@ -2581,6 +2539,9 @@ async function restorePreviousSession() {
     els.imageMode.value = saved.imageMode ?? els.imageMode.value;
     els.imageTool.value = saved.imageTool ?? "point";
     els.lineThickness.value = saved.lineThickness ?? "1";
+    state.manualColorLimits = Boolean(saved.manualColorLimits);
+    els.imageLowValue.value = saved.imageLowValue ?? "";
+    els.imageHighValue.value = saved.imageHighValue ?? "";
     els.imageLow.value = saved.imageLow ?? els.imageLow.value;
     els.imageHigh.value = saved.imageHigh ?? els.imageHigh.value;
     els.colorMap.value = saved.colorMap ?? els.colorMap.value;
@@ -2595,7 +2556,7 @@ async function restorePreviousSession() {
     els.referenceOffset.value = saved.referenceOffset ?? "0";
     els.clickedViewMode.value = saved.clickedViewMode ?? "spectra";
     els.heatmapNormalizeAxis.value = saved.clickedHeatmapNormalizeAxis ?? "none";
-    els.heatmapRenderMode.value = "pcolormesh";
+    els.heatmapRenderMode.value = saved.clickedHeatmapRenderMode || "pcolormesh";
     els.heatmapTranspose.checked = Boolean(saved.clickedHeatmapTranspose);
     els.smoothToggle.checked = Boolean(saved.smoothToggle);
     els.smoothWindow.value = saved.smoothWindow ?? "7";
@@ -2633,21 +2594,63 @@ async function restorePreviousSession() {
     syncSmoothDefaults(!saved.smoothWindow);
     state.selection = saved.selection || state.selection;
     clampSelectionToFile(state.selectedFile);
+    syncRangeInputs();
+    updateRangeLabel();
     syncGridInputsFromState();
     renderSelectedFileSummary();
     await renderCurrentFile();
     state.clickedTraces = [];
-    for (const pixel of saved.clickedPixels || []) {
-      await appendClickedTrace(pixel.x, pixel.y);
+    if (saved.schema_version === 3 && Array.isArray(saved.clickedTraces)) {
+      if (saved.selectedFile?.source_signature !== state.selectedFile.source_signature) {
+        showError("Source file changed. Saved selections were not restored; select points or lines again.");
+      } else {
+        state.clickedTraces = saved.clickedTraces;
+      }
+    } else {
+      for (const pixel of saved.clickedPixels || []) await appendClickedTrace(pixel.x, pixel.y);
     }
+    updateReferenceControls();
+    els.referenceSelect.value = saved.referenceSelection || "";
+    renderMarkers();
+    await renderMeanAndClickedPlots();
     renderClickedList();
     writeStoredState();
   } catch (error) {
     showError(`Previous session could not be restored:\n${error}`);
+  } finally {
+    state.restoring = false;
   }
 }
 
 function bindEvents() {
+  document.getElementById("auto-contrast").addEventListener("click", async () => { state.manualColorLimits = false; await renderPreview(); writeStoredState(); });
+  document.getElementById("session-save").addEventListener("click", () => {
+    const payload = sessionSnapshot();
+    persistSession(payload);
+    exportBlob(new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"}), "pl-session.json");
+  });
+  document.getElementById("session-load").addEventListener("change", async event => {
+    try {
+      const file = event.target.files[0];
+      if (!file) return;
+      const saved = JSON.parse(await file.text());
+      if (saved.schema_version !== 3 || !Array.isArray(saved.clickedTraces) || saved.clickedTraces.some(t => !Array.isArray(t.x) || !Array.isArray(t.y) || t.x.length !== t.y.length)) throw new Error("Unsupported or invalid session file");
+      await restorePreviousSession(saved);
+    } catch (error) { showError(`Session open failed: ${error.message}`); }
+    event.target.value = "";
+  });
+  document.getElementById("reload-source").addEventListener("click", async () => {
+    try {
+      if (!state.selectedPath) return;
+      state.clickedTraces = [];
+      await refreshSelectedFileFromImportSettings(true);
+      renderClickedList(); updateReferenceControls();
+    } catch (error) { showError(`Reload failed: ${error.message}`); }
+  });
+  window.addEventListener("pagehide", () => {
+    if (!state.restoring) navigator.sendBeacon("/api/session", new Blob([JSON.stringify(sessionSnapshot())], {type: "application/json"}));
+  });
+
   els.uiTheme.addEventListener("change", () => {
     applyTheme(els.uiTheme.value);
     writeStoredState();
@@ -2774,10 +2777,17 @@ function bindEvents() {
     );
     exportCanvas(exportCanvasEl, `${name}-image`);
   });
-  els.imageExportCsv.addEventListener("click", () => {
-    const name = baseFileName(state.selectedFile?.name, "pl-image");
-    if (!state.currentPreview) return;
-    exportCsv(imagePreviewCsv(state.currentPreview), `${name}-image`);
+  els.imageExportCsv.addEventListener("click", async () => {
+    const preview = state.currentPreview;
+    if (!preview) return;
+    try {
+      const url = new URL(preview.requestUrl, location.origin);
+      url.pathname = "/api/pl-image-export";
+      url.searchParams.set("source_signature", preview.source_signature);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(await response.text());
+      exportBlob(await response.blob(), `${baseFileName(preview.source_name, "pl-map")}-full-map.zip`);
+    } catch (error) { showError(`Export failed: ${error.message}`); }
   });
   els.imageCopy.addEventListener("click", async () => {
     try {
@@ -2814,7 +2824,7 @@ function bindEvents() {
     if (!file) return;
     const payload = await loadTrace(file.path, 0, 0);
     exportCsv(
-      tracesToCsv([{ label: "Global Mean", x: payload.x.slice(), y: payload.mean_trace.slice() }]),
+      tracesToCsv([{ label: "Global Mean", x: payload.x.slice(), y: payload.mean_trace.slice() }], "raw-mean"),
       `${baseFileName(file.name, "pl-mean-spectrum")}-mean-spectrum`
     );
   });
@@ -2833,7 +2843,7 @@ function bindEvents() {
     const file = getSelectedFile();
     if (!file || !state.clickedTraces.length) return;
     exportCsv(
-      tracesToCsv(buildClickedBundles()),
+      tracesToCsv(buildClickedBundles(true)),
       `${baseFileName(file.name, "pl-clicked-spectra")}-clicked-spectra`
     );
   });
@@ -2879,6 +2889,8 @@ function bindEvents() {
   });
   for (const input of [els.gridWidth, els.gridHeight]) {
     input.addEventListener("change", async () => {
+      state.clickedTraces = [];
+      renderClickedList(); updateReferenceControls();
       const dims = getGridDimensions();
       state.gridWidth = dims?.width ?? null;
       state.gridHeight = dims?.height ?? null;
@@ -2895,11 +2907,20 @@ function bindEvents() {
   }
   for (const input of [els.scanSizeX, els.scanSizeY, els.scanUnit]) {
     input.addEventListener("change", async () => {
+      const dims = getGridDimensions();
+      const calibration = dims ? getSpatialCalibration(dims.width, dims.height) : null;
+      for (const trace of state.clickedTraces) {
+        if (trace.groupType !== "line" || !trace.lineStart) continue;
+        trace.lineDistancePhysical = calibration ? Math.hypot((trace.pixelX-trace.lineStart.x)*calibration.xStep, (trace.pixelY-trace.lineStart.y)*calibration.yStep) : null;
+        trace.lineDistanceUnit = calibration?.unit || "";
+        trace.exportLabel = calibration ? `${formatNumber(trace.lineDistancePhysical,3)} ${calibration.unit}` : `${formatNumber(trace.lineDistancePixels,2)} px`;
+      }
       await renderCurrentFile();
       writeStoredState();
     });
   }
   els.imageLow.addEventListener("input", async () => {
+    state.manualColorLimits = false;
     if (Number(els.imageLow.value) >= Number(els.imageHigh.value)) {
       els.imageHigh.value = String(Number(els.imageLow.value) + 1);
     }
@@ -2908,6 +2929,7 @@ function bindEvents() {
     writeStoredState();
   });
   els.imageHigh.addEventListener("input", async () => {
+    state.manualColorLimits = false;
     if (Number(els.imageHigh.value) <= Number(els.imageLow.value)) {
       els.imageLow.value = String(Number(els.imageHigh.value) - 1);
     }
@@ -2916,11 +2938,13 @@ function bindEvents() {
     writeStoredState();
   });
   els.imageLowValue.addEventListener("change", async () => {
+    state.manualColorLimits = true;
     updateImageRangeLabel();
     await renderPreview();
     writeStoredState();
   });
   els.imageHighValue.addEventListener("change", async () => {
+    state.manualColorLimits = true;
     updateImageRangeLabel();
     await renderPreview();
     writeStoredState();
@@ -3216,7 +3240,7 @@ function init() {
   applyTheme(saved?.uiTheme || "bright");
   applyImportSettings(saved?.importSettings || {});
   setImportLearningStatus("");
-  els.datasetMeta.textContent = "";
+  els.datasetMeta.textContent = "Missing values: gray / gaps. Numeric spectral axes: nm (verify input). Pickle files: trusted sources only.";
   clearError();
   renderSelectedFileSummary();
   renderMultiGallery();

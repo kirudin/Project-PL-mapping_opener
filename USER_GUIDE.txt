@@ -1,151 +1,85 @@
-PL Mapping Viewer User Guide
-
-1. What this program does
-
-PL Mapping Viewer opens PL mapping .pickle files and lets you:
-- view a PL intensity image
-- inspect the global mean spectrum
-- click pixels and compare multiple spectra
-- select a single wavelength or a wavelength range to update the image
-- save images and spectra
-- collect images in the Multi tab
-
-
-2. Windows users
-
-If you received the built Windows package:
-- open the folder dist\PLMappingViewer
-- run PLMappingViewer.exe
-
-Important:
-- keep the full dist\PLMappingViewer folder together
-- do not move only the exe by itself
-
-
-3. First launch
-
-When the program starts:
-- your web browser opens automatically
-- the viewer runs locally on your computer
-- an internet connection is not needed for normal use after launch
-
-If the browser does not open automatically:
-- open your browser
-- go to http://127.0.0.1:8234
-
-
-4. Open a file
-
-To open a PL mapping file:
-- click Choose Pickle File
-- select a .pickle file
-
-Supported input:
-- pandas DataFrame pickle
-- index: wavelength values
-- columns: pixel spectra
-
-If the map is not square:
-- enter X Pixels and Y Pixels manually
-- X Pixels x Y Pixels must match the total pixel count
-
-
-5. Main workflow
-
-Image panel:
-- shows the current PL map
-- click the map to add a spectrum to Clicked Pixel Spectra
-- clicked points are numbered in order
-
-Global Mean Spectrum:
-- click a wavelength to generate a single-wavelength image
-- drag across a wavelength range to generate a range image
-- drag on the x-axis zoom band to zoom the spectrum axis
-
-Clicked Pixel Spectra:
-- compares the spectra from selected pixels
-- click or drag on this plot to update the image using the same wavelength or range logic
-- use Clear to remove all clicked spectra
-
-Multi tab:
-- use Send to Multi to store the current image
-- Multi works as an image gallery
-
-
-6. Main controls
-
-Image mode:
-- Single wavelength
-- Range Sum
-- Range Mean
-
-Colormap:
-- image colormap and graph colormap are separate
-- invert can be applied separately
-
-Color range:
-- adjust Color Min and Color Max
-- Actual Min and Actual Max update from the current image values
-
-Smooth:
-- Smooth applies to Clicked Pixel Spectra
-- set Window and Poly manually
-
-Trace controls:
-- Normalize clicked traces
-- Trace Offset
-
-
-7. Save and copy
-
-Image panel:
-- Copy
-- PNG
-- CSV
-- Send to Multi
-
-Spectrum panels:
-- Copy
-- PNG
-- CSV
-- Reset Axes
-
-Multi tab:
-- each saved image can be copied or exported again
-
-
-8. Session restore
-
-The viewer saves the recent session in the browser.
-When you refresh or reopen the viewer, it may restore:
-- last opened file
-- wavelength or range selection
-- colormap settings
-- clicked spectra
-- Multi gallery items
-
-Note:
-- this depends on the local browser storage and temporary uploaded file still being available
-
-
-9. If something does not work
-
-If the file opens but no image appears:
-- check X Pixels and Y Pixels
-- make sure they match the real map size
-
-If the viewer page opens but looks old:
-- refresh the browser with Shift + Reload
-
-If the exe opens but browser does not connect:
-- close the program
-- relaunch PLMappingViewer.exe
-- keep the full dist\PLMappingViewer folder together
-
-
-10. Version
-
-PL Mapping Viewer
+PL Mapping Viewer 0.3.1
 Creator: Hwi Je Woo
-Version: v0.1
-Created: 2026-03-10 KST
+Updated: 2026-09-11
+
+START
+Extract the entire OS-specific ZIP. macOS: double-click Launch PL Mapping Viewer.command.
+Windows: run PL-Mapping-Viewer.exe. Keep the terminal open; Ctrl+C stops the app.
+Normal processing is local/offline. The browser address is printed in the terminal.
+
+IMPORT
+Use Open Data File, choose a file, confirm grid width and height, then Apply and Open.
+Supported: DataFrame pickle, numeric NumPy NPY/NPZ, and CSV/TXT/TSV/DAT/ASC tables.
+Pickle is a Python executable serialization format: open only files from trusted sources.
+NPY/NPZ object arrays are rejected. NPZ can contain data, wavelengths, width, height.
+The canonical matrix has spectral channels in rows and pixels in columns.
+Pixels are row-major: index = y * width + x, x increases right, y increases down.
+Raw arrays use heuristics to infer axis order; confirm dimensions and known pixel spectra.
+Numeric spectral axes are interpreted as wavelength in nm in this release. Convert energy
+or wavenumber axes before import. Spectral axes must be finite and strictly monotonic.
+Non-numeric axes use channel indices. Non-square maps require explicit or embedded dimensions.
+Reload source explicitly rereads a selected source and clears selected traces.
+
+MAP AND SPECTRA
+Click a mean spectrum wavelength or drag a wavelength range. The map can show a single
+channel, the unweighted sum of channels, or their mean. Range Sum is NOT a wavelength
+integral; unequal wavelength spacing is not weighted. Numeric range controls also apply.
+Click the image in Point mode to select a spectrum. Line mode extracts each pixel along
+the line, averaging a perpendicular band according to Line Thickness. All line samples
+are retained (the former 96-sample limit is removed). Space calibration uses scan extent
+between first and last pixel centers: step = scan size / (pixel count - 1).
+The map preview is at most 256 pixels on its longest edge. Clicking selects the original
+pixel represented by that displayed nearest-neighbor sample. Use full CSV export for all pixels.
+Scan calibration is user-entered and is not an automatic instrument calibration.
+
+MISSING DATA AND PROCESSING
+Non-finite values remain missing: gray map pixels, gaps in curves, empty CSV cells.
+Averages and sums ignore missing samples, but all-missing groups remain missing.
+Clicked-trace processing order: reference division, channel-index polynomial smoothing,
+then optional min-max normalization. A reference denominator with magnitude below 1e-12,
+or a missing reference, produces a missing result rather than an amplified artificial value.
+Smoothing does not fill originally missing samples and assumes channel-index spacing.
+Trace Offset affects display only; exported clicked-trace values exclude this offset.
+Auto contrast ignores missing values. Actual Min/Max values set manual color limits;
+Auto contrast restores automatic limits. Reference division and normalization are not
+background subtraction or detector-response calibration.
+
+EXPORT
+Map CSV downloads a ZIP with full-resolution image.csv and metadata.json. CSV columns:
+x_pixel, y_pixel, intensity. Metadata records source identity, axis, selection, mode,
+import settings, units, missing policy and app version. This is the complete selected map,
+not just the visible preview. Reopen the source if it changed after the preview was rendered.
+Clicked CSV exports processed spectra without visual offsets. Its first line is a '# '
+JSON metadata comment; use comment='#' when reading with pandas. It records processing
+settings and line/point selections. Line CSV also has coordinate and distance rows.
+Mean CSV exports the RAW global mean, even if the mean plot has reference division enabled.
+PNG and Copy capture rendered appearance; map PNG remains a preview image without a full
+scientific figure frame. Use full CSV for quantitative analysis and final figure preparation.
+Multi stores rendered image snapshots, not independent raw datasets.
+
+SESSION
+The most recent session is automatically saved to the OS app-data directory alongside
+retained uploaded copies. Save session also downloads JSON; Open session JSON reloads it.
+Point and averaged line spectra, group IDs, line thickness, distances and settings are kept.
+Reopen sessions on the same computer while the original/uploaded source is available.
+A changed source identity prevents old trace snapshots from being restored onto new data.
+Session JSON is not a portable raw-data archive. Browser legacy sessions can restore points,
+but cannot reconstruct line metadata that old versions never saved.
+
+LIMITS
+ROI polygons, background subtraction, peak fitting/maps, batch workflows and physical-axis
+conversion are planned separately. Bright PL patterns alone do not establish a mechanism.
+Keep original measurements and processing conditions with research conclusions.
+For errors, retain the version, source format, grid, exact steps and console/log output.
+
+UPDATE NOTIFICATIONS
+Check for updates queries the public GitHub repository. Check once daily is enabled by
+default and can be disabled. Include preview releases is enabled for this preview build;
+uncheck it for stable releases only. Preferences are per browser origin, separate from
+analysis sessions. Successful checks are cached on disk for 24 hours. Manual checks bypass
+that cache except a 15-second request throttle. Failed checks retry after 5 minutes.
+The lookup has a short timeout and never blocks local analysis. No measurement data is sent.
+Open releases opens GitHub only after you click. Choose the ZIP for your OS, quit the old
+app, extract the new package and relaunch. User data stays outside the package. No automatic
+download or installer is included. v0.3.0 users must manually install v0.3.1 once to gain
+these notifications.

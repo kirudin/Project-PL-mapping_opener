@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PL Mapping Viewer</title>
-    <link rel="stylesheet" href="/styles.css?v=20260507-import-modal3" />
+    <link rel="stylesheet" href="/styles.css?v=0.3.1" />
   </head>
   <body>
     <div class="shell">
@@ -12,8 +12,15 @@
         <div class="panel">
           <h1>PL Mapping Viewer</h1>
           <p class="meta-line">Creator: Hwi Je Woo</p>
-          <p class="meta-line">Version: 0.1</p>
+          <p class="meta-line">Version: 0.3.1</p>
           <p class="meta-line">Created: 2026-03-10 KST</p>
+          <section class="update-panel" aria-label="Application updates">
+            <button id="check-updates" type="button">Check for updates</button>
+            <label><input id="auto-updates" type="checkbox" checked /> Check once daily</label>
+            <label><input id="preview-updates" type="checkbox" checked /> Include preview releases</label>
+            <p id="update-status" role="status" aria-live="polite">Updates are checked on GitHub. No automatic installation.</p>
+            <a id="release-link" href="https://github.com/kirudin/Project-PL-mapping_opener/releases" target="_blank" rel="noopener noreferrer">Open releases</a>
+          </section>
           <label for="ui-theme">UI Theme</label>
           <select id="ui-theme">
             <option value="bright">Bright</option>
@@ -22,6 +29,7 @@
             <option value="rosered">Rosered</option>
             <option value="twilight">Twilight</option>
           </select>
+          <div class="session-controls"><button id="session-save" type="button">Save session</button><button id="reload-source" type="button">Reload source</button><label for="session-load">Open session JSON</label><input id="session-load" type="file" accept=".json" /></div>
           <p id="dataset-meta" class="muted"></p>
           <p id="app-error" class="error-text" hidden></p>
         </div>
@@ -87,6 +95,7 @@
             <option value="nm">nm</option>
             <option value="mm">mm</option>
           </select>
+          <button id="auto-contrast" type="button">Auto contrast</button>
           <label for="image-low">Color Min</label>
           <input id="image-low" type="range" min="0" max="95" value="0" />
           <label for="image-high">Color Max</label>
@@ -273,7 +282,7 @@
                 <div id="image-toast" class="image-toast" hidden></div>
                 <button id="image-copy" type="button">Copy</button>
                 <button id="image-export-png" type="button">PNG</button>
-                <button id="image-export-csv" type="button">CSV</button>
+                <button title="Full-resolution image.csv and metadata.json" id="image-export-csv" type="button">CSV</button>
                 <button id="send-to-multi" type="button">Send to Multi</button>
                 <button id="image-clear" type="button">Clear</button>
               </div>
@@ -296,7 +305,7 @@
               <div class="panel-actions">
                 <button id="mean-copy" type="button">Copy</button>
                 <button id="mean-export-png" type="button">PNG</button>
-                <button id="mean-export-csv" type="button">CSV</button>
+                <button title="Raw global mean; no reference division or display processing" id="mean-export-csv" type="button">CSV</button>
                 <button id="reset-mean-axes" type="button">Reset Axes</button>
               </div>
               <canvas id="mean-canvas" width="960" height="260"></canvas>
@@ -482,6 +491,8 @@
       </div>
     </div>
 
-    <script src="/app.js?v=20260507-import-modal3"></script>
+    <script src="/updates.js?v=0.3.1"></script>
+    <script src="/processing.js?v=0.3.1"></script>
+    <script src="/app.js?v=0.3.1"></script>
   </body>
 </html>

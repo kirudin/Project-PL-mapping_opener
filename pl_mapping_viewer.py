@@ -13,7 +13,14 @@ import urllib.parse
 import uuid
 import webbrowser
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, wraps
+import csv
+import io
+import zipfile
+import os
+from pl_core import finite_mean, GridPreview, build_line_band_points, clamp_line_thickness, downsample_grid, finite_min_max, get_line_pixels, nan_safe_list
+from update_checker import check_updates
+from runtime_paths import APP_VERSION, DATA_HOME, UPLOAD_DIR, LEGACY_UPLOAD_DIR, load_session, save_session
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,8 +30,7 @@ ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "pl_mapping_static"
 DATA_DIR = ROOT / "PL_mapping_opener"
 BROWSE_ROOT = Path.home().resolve()
-UPLOAD_DIR = (Path(tempfile.gettempdir()) / "pl-mapping-viewer-uploads").resolve()
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 UPLOAD_PREFIX_RE = re.compile(r"^[0-9a-f]{32}_")
 NUMBER_TOKEN_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
@@ -36,6 +42,7 @@ def is_allowed_path(path: Path) -> bool:
         or BROWSE_ROOT in resolved.parents
         or resolved == UPLOAD_DIR
         or UPLOAD_DIR in resolved.parents
+        or LEGACY_UPLOAD_DIR in resolved.parents
     )
 
 
@@ -53,14 +60,6 @@ def ensure_pandas_available() -> None:
         ) from exc
 
 
-@dataclass
-class GridPreview:
-    width: int
-    height: int
-    min_value: float
-    max_value: float
-    values: list[float]
-    source_points: int
 
 
 @dataclass(frozen=True)
@@ -162,24 +161,6 @@ def parse_dimensions(raw_width: str | None, raw_height: str | None, point_count:
     )
 
 
-def downsample_grid(values: list[float], source_width: int, source_height: int, max_edge: int = 256) -> GridPreview:
-    clean_values = [value if math.isfinite(value) else 0.0 for value in values]
-    if source_width <= max_edge and source_height <= max_edge:
-        min_value, max_value = finite_min_max(clean_values)
-        return GridPreview(source_width, source_height, min_value, max_value, clean_values, len(clean_values))
-
-    scale = max(source_width / max_edge, source_height / max_edge)
-    target_width = max(1, int(round(source_width / scale)))
-    target_height = max(1, int(round(source_height / scale)))
-    sampled: list[float] = []
-    for ty in range(target_height):
-        sy = min(source_height - 1, int(ty * source_height / target_height))
-        base = sy * source_width
-        for tx in range(target_width):
-            sx = min(source_width - 1, int(tx * source_width / target_width))
-            sampled.append(clean_values[base + sx])
-    min_value, max_value = finite_min_max(clean_values)
-    return GridPreview(target_width, target_height, min_value, max_value, sampled, len(clean_values))
 
 
 def mime_type(path: Path) -> str:
@@ -218,15 +199,16 @@ def resolve_browse_dir(query: str | None) -> Path:
 
 
 def coerce_wavelengths(raw_values: object, slice_count: int) -> tuple[list[float], str, str]:
+    import numpy as np
     try:
-        import numpy as np
-
         values = np.asarray(raw_values, dtype=float).reshape(-1)
-        if values.size == slice_count:
-            return values.astype(float).tolist(), "nm", "Wavelength"
-    except Exception:
-        pass
-    return [float(index) for index in range(slice_count)], "index", "Slice"
+    except (ValueError, TypeError):
+        return [float(i) for i in range(slice_count)], "index", "Slice"
+    if values.size != slice_count or not np.all(np.isfinite(values)):
+        raise ValueError("Spectral axis must have one finite value per spectrum channel.")
+    if len(values) > 1 and not (np.all(np.diff(values) > 0) or np.all(np.diff(values) < 0)):
+        raise ValueError("Spectral axis must be strictly increasing or decreasing, without duplicates.")
+    return values.tolist(), "nm", "Wavelength"
 
 
 def parse_optional_int(raw_value: str | None) -> int | None:
@@ -715,14 +697,18 @@ def load_mapping_source(path: Path, options: ImportOptions | None = None) -> obj
         try:
             import numpy as np
 
-            loaded = np.load(path, allow_pickle=True)
+            loaded = np.load(path, allow_pickle=False)
             if suffix == ".npz":
                 keys = list(loaded.keys())
                 if not keys:
                     raise TypeError("NPZ file has no arrays.")
                 if len(keys) == 1:
-                    return loaded[keys[0]]
-                return {key: loaded[key] for key in keys}
+                    result = loaded[keys[0]]
+                    loaded.close()
+                    return result
+                result = {key: loaded[key] for key in keys}
+                loaded.close()
+                return result
             return loaded
         except Exception as exc:
             raise TypeError(f"Could not read NumPy mapping data: {path.name}") from exc
@@ -737,23 +723,23 @@ def load_mapping_source(path: Path, options: ImportOptions | None = None) -> obj
             raise TypeError(f"Unsupported or unreadable mapping file: {path.name}") from (csv_error or pickle_error)
 
 
-def nan_safe_list(values: "np.ndarray") -> list[float]:
-    import numpy as np
-
-    array = np.asarray(values, dtype=float)
-    if array.size == 0:
-        return []
-    return np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0).astype(float).tolist()
 
 
-def finite_min_max(values: list[float]) -> tuple[float, float]:
-    finite = [value for value in values if math.isfinite(value)]
-    if not finite:
-        return 0.0, 0.0
-    return min(finite), max(finite)
 
 
-@lru_cache(maxsize=24)
+def file_cached(function):
+    @lru_cache(maxsize=4)
+    def cached(path, signature, args, kwargs):
+        return function(path, *args, **dict(kwargs))
+    @wraps(function)
+    def wrapper(path, *args, **kwargs):
+        st = Path(path).stat()
+        return cached(str(path), (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino), args, tuple(sorted(kwargs.items())))
+    wrapper.cache_clear = cached.cache_clear
+    return wrapper
+
+
+@file_cached
 def load_mapping_analysis(
     path: str,
     import_mode: str = "auto",
@@ -790,7 +776,10 @@ def load_mapping_analysis(
     )
     import numpy as np
 
-    matrix = np.asarray(matrix, dtype=float)
+    matrix = np.array(matrix, dtype=float, copy=True)
+    matrix[~np.isfinite(matrix)] = np.nan
+    if matrix.size == 0:
+        raise ValueError("Mapping data is empty.")
     pixel_count = int(matrix.shape[1])
     inferred_width, inferred_height = infer_dimensions(pixel_count)
     has_embedded_dimensions = embedded_width is not None and embedded_height is not None and embedded_width * embedded_height == pixel_count
@@ -802,7 +791,7 @@ def load_mapping_analysis(
     )
     dimension_candidates = factor_dimension_candidates(pixel_count)
 
-    mean_trace = nan_safe_list(np.nanmean(matrix, axis=1))
+    mean_trace = nan_safe_list(finite_mean(matrix, axis=1))
     return {
         "name": source.name,
         "inferred_width": inferred_width,
@@ -818,6 +807,8 @@ def load_mapping_analysis(
         "wavelength_unit": wavelength_unit,
         "wavelength_axis_label": wavelength_axis_label,
         "size_bytes": source.stat().st_size,
+        "source_signature": f"{source.stat().st_mtime_ns}:{source.stat().st_size}",
+        "missing_count": int(np.count_nonzero(~np.isfinite(matrix))),
         "import_mode": import_options.import_mode,
         "manual_format": import_options.manual_format,
         "embedded_width": embedded_width,
@@ -832,7 +823,6 @@ def load_mapping_analysis(
     }
 
 
-@lru_cache(maxsize=24)
 def load_pickle_payload(
     path: str,
     raw_width: str | None = None,
@@ -894,6 +884,8 @@ def build_file_summary() -> dict:
                 "min_wavelength": payload["min_wavelength"],
                 "max_wavelength": payload["max_wavelength"],
                 "size_bytes": payload["size_bytes"],
+        "source_signature": payload["source_signature"],
+        "missing_count": payload["missing_count"],
             }
         )
     return {"dataset_dir": str(ROOT), "file_count": len(files), "files": files}
@@ -960,6 +952,8 @@ def build_file_info(
         "min_wavelength": payload["min_wavelength"],
         "max_wavelength": payload["max_wavelength"],
         "size_bytes": payload["size_bytes"],
+        "source_signature": payload["source_signature"],
+        "missing_count": payload["missing_count"],
         "wavelength_unit": payload["wavelength_unit"],
         "wavelength_axis_label": payload["wavelength_axis_label"],
         "import_mode": payload["import_mode"],
@@ -997,6 +991,8 @@ def build_file_analysis(
         "pixel_count": payload["pixel_count"],
         "slice_count": payload["slice_count"],
         "size_bytes": payload["size_bytes"],
+        "source_signature": payload["source_signature"],
+        "missing_count": payload["missing_count"],
         "min_wavelength": payload["min_wavelength"],
         "max_wavelength": payload["max_wavelength"],
         "wavelength_unit": payload["wavelength_unit"],
@@ -1030,75 +1026,10 @@ def clamp_range_indices(slice_count: int, start_index: int, end_index: int) -> t
     return safe_start, safe_end
 
 
-def clamp_line_thickness(thickness: int | str | None) -> int:
-    try:
-        value = int(thickness) if thickness is not None else 1
-    except (TypeError, ValueError):
-        value = 1
-    return max(1, min(25, value))
 
 
-def get_line_pixels(start_x: int, start_y: int, end_x: int, end_y: int) -> list[tuple[int, int]]:
-    x0, y0, x1, y1 = start_x, start_y, end_x, end_y
-    dx = abs(x1 - x0)
-    dy = -abs(y1 - y0)
-    sx = 1 if x0 < x1 else -1
-    sy = 1 if y0 < y1 else -1
-    err = dx + dy
-    points: list[tuple[int, int]] = []
-    while True:
-        points.append((x0, y0))
-        if x0 == x1 and y0 == y1:
-            break
-        e2 = 2 * err
-        if e2 >= dy:
-            err += dy
-            x0 += sx
-        if e2 <= dx:
-            err += dx
-            y0 += sy
-    return points
 
 
-def build_line_band_points(
-    x: int,
-    y: int,
-    start_x: int,
-    start_y: int,
-    end_x: int,
-    end_y: int,
-    thickness: int,
-    width: int,
-    height: int,
-) -> list[tuple[int, int]]:
-    if thickness <= 1:
-        return [(x, y)]
-    dx = end_x - start_x
-    dy = end_y - start_y
-    length = math.hypot(dx, dy)
-    if length < 1e-12:
-        half = thickness // 2
-        points = []
-        for oy in range(-half, half + 1):
-            for ox in range(-half, half + 1):
-                px = x + ox
-                py = y + oy
-                if 0 <= px < width and 0 <= py < height:
-                    points.append((px, py))
-        return points or [(x, y)]
-
-    perp_x = -dy / length
-    perp_y = dx / length
-    offsets = [index - (thickness - 1) / 2 for index in range(thickness)]
-    seen: set[tuple[int, int]] = set()
-    points: list[tuple[int, int]] = []
-    for offset in offsets:
-        px = int(round(x + perp_x * offset))
-        py = int(round(y + perp_y * offset))
-        if 0 <= px < width and 0 <= py < height and (px, py) not in seen:
-            seen.add((px, py))
-            points.append((px, py))
-    return points or [(x, y)]
 
 
 def parse_pl_image(
@@ -1118,6 +1049,7 @@ def parse_pl_image(
     x_column: str | None,
     y_column: str | None,
     data_start_column: str | None,
+    full_resolution: bool = False,
 ) -> dict:
     import numpy as np
 
@@ -1134,6 +1066,8 @@ def parse_pl_image(
         y_column,
         data_start_column,
     )
+    if not all(math.isfinite(v) for v in (target_wavelength, start_wavelength, end_wavelength)):
+        raise ValueError("Wavelength selections must be finite.")
     slice_count = payload["slice_count"]
     wavelengths = payload["wavelengths"]
     target_index = nearest_wavelength_index(wavelengths, target_wavelength)
@@ -1143,11 +1077,12 @@ def parse_pl_image(
 
     if selection == "range":
         if mode == "mean":
-            row = np.nanmean(payload["matrix"][safe_start : safe_end + 1, :], axis=0)
+            row = finite_mean(payload["matrix"][safe_start : safe_end + 1, :], axis=0)
             label = f"Range Mean {wavelengths[safe_start]:.2f}-{wavelengths[safe_end]:.2f} {payload['wavelength_unit']}"
         else:
             mode = "sum"
             row = np.nansum(payload["matrix"][safe_start : safe_end + 1, :], axis=0)
+            row[np.all(~np.isfinite(payload["matrix"][safe_start : safe_end + 1, :]), axis=0)] = np.nan
             label = f"Range Sum {wavelengths[safe_start]:.2f}-{wavelengths[safe_end]:.2f} {payload['wavelength_unit']}"
         wavelength = None
     else:
@@ -1157,8 +1092,13 @@ def parse_pl_image(
         wavelength = wavelengths[target_index]
 
     values = nan_safe_list(np.asarray(row, dtype=float))
-    preview = downsample_grid(values, payload["width"], payload["height"])
+    preview = downsample_grid(values, payload["width"], payload["height"], max_edge=max(payload["width"], payload["height"]) if full_resolution else 256)
     return {
+        "app_version": APP_VERSION,
+        "source_signature": payload["source_signature"],
+        "source_name": payload["name"],
+        "missing_policy": "nonfinite -> null; aggregates ignore missing; all-missing -> null",
+        "axis_unit_note": "Numeric spectral axes are interpreted as nm; verify source units before import.",
         "width": preview.width,
         "height": preview.height,
         "source_width": payload["width"],
@@ -1296,6 +1236,7 @@ def parse_pl_line_traces(
                 np.nansum(subset, axis=1),
                 np.maximum(1, finite_counts),
             )
+            trace[finite_counts == 0] = np.nan
         else:
             trace = payload["matrix"][:, y_value * width + x_value]
         traces.append(
@@ -1325,9 +1266,52 @@ def parse_pl_line_traces(
     }
 
 
+def image_export_zip(payload: dict, extra: dict | None = None) -> bytes:
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow(["x_pixel", "y_pixel", "intensity"])
+    for y in range(payload["height"]):
+        for x in range(payload["width"]):
+            writer.writerow([x, y, payload["values"][y * payload["width"] + x]])
+    metadata = {k: v for k, v in payload.items() if k != "values"}
+    metadata.update(extra or {})
+    metadata.update({"layout": "row-major; x right, y down; integer pixel centers", "missing_csv": "empty cell", "processing": "raw single channel or unweighted range sum/mean; no display transforms"})
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("image.csv", stream.getvalue())
+        archive.writestr("metadata.json", json.dumps(metadata, indent=2, allow_nan=False))
+    return output.getvalue()
+
+
 class PLMappingHandler(BaseHTTPRequestHandler):
+    def valid_origin(self) -> bool:
+        origin = self.headers.get("Origin")
+        if origin and origin != f"http://{self.headers.get('Host')}":
+            self.send_error(403, "Cross-origin writes are not allowed")
+            return False
+        return True
+
+    def read_body(self, limit: int) -> bytes:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > limit:
+            raise ValueError(f"Request must be between 1 and {limit} bytes")
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise ValueError("Incomplete upload")
+        return data
+
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if not self.valid_origin():
+            return
+        if parsed.path == "/api/session":
+            try:
+                payload = json.loads(self.read_body(20 * 1024 * 1024))
+                save_session(payload)
+                self.serve_json({"saved": True})
+            except Exception as exc:
+                self.send_error(400, str(exc))
+            return
         if parsed.path == "/api/upload-pickle":
             self.serve_upload_pickle()
             return
@@ -1338,8 +1322,23 @@ class PLMappingHandler(BaseHTTPRequestHandler):
         route = parsed.path
         params = urllib.parse.parse_qs(parsed.query)
 
+        if route == "/api/update-check":
+            self.serve_json(check_updates(force=params.get("force", ["0"])[0] == "1", include_preview=params.get("preview", ["1"])[0] == "1"))
+            return
+        if route == "/api/app-info":
+            self.serve_json({"version": APP_VERSION, "data_home": str(DATA_HOME)})
+            return
+        if route == "/api/session":
+            self.serve_json(load_session())
+            return
         if route == "/":
             self.serve_static(STATIC_DIR / "index.html")
+            return
+        if route == "/updates.js":
+            self.serve_static(STATIC_DIR / "updates.js")
+            return
+        if route == "/processing.js":
+            self.serve_static(STATIC_DIR / "processing.js")
             return
         if route == "/app.js":
             self.serve_static(STATIC_DIR / "app.js")
@@ -1382,7 +1381,7 @@ class PLMappingHandler(BaseHTTPRequestHandler):
                 params.get("data_start_column", [None])[0],
             )
             return
-        if route == "/api/pl-image":
+        if route in {"/api/pl-image", "/api/pl-image-export"}:
             self.serve_pl_image(
                 params.get("path", [None])[0],
                 params.get("mode", ["sum"])[0],
@@ -1400,6 +1399,8 @@ class PLMappingHandler(BaseHTTPRequestHandler):
                 params.get("x_column", [None])[0],
                 params.get("y_column", [None])[0],
                 params.get("data_start_column", [None])[0],
+                export=route.endswith("-export"),
+                expected_signature=params.get("source_signature", [None])[0],
             )
             return
         if route == "/api/pl-trace":
@@ -1458,7 +1459,7 @@ class PLMappingHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def serve_json(self, payload: dict) -> None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        data = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -1484,6 +1485,8 @@ class PLMappingHandler(BaseHTTPRequestHandler):
         x_column: str | None,
         y_column: str | None,
         data_start_column: str | None,
+        export: bool = False,
+        expected_signature: str | None = None,
     ) -> None:
         try:
             source = resolve_pickle_path(file_name)
@@ -1492,8 +1495,7 @@ class PLMappingHandler(BaseHTTPRequestHandler):
             target_wavelength = float(raw_target_wavelength)
             start_wavelength = float(raw_start_wavelength)
             end_wavelength = float(raw_end_wavelength)
-            self.serve_json(
-                parse_pl_image(
+            payload = parse_pl_image(
                     source,
                     mode,
                     selection,
@@ -1510,8 +1512,20 @@ class PLMappingHandler(BaseHTTPRequestHandler):
                     x_column,
                     y_column,
                     data_start_column,
+                    full_resolution=export,
                 )
-            )
+            if expected_signature and payload["source_signature"] != expected_signature:
+                raise ValueError("Source file changed. Reopen the file before exporting.")
+            if export:
+                data = image_export_zip(payload, {"import": dict(urllib.parse.parse_qsl(urllib.parse.urlparse(self.path).query))})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", 'attachment; filename="pl-map.zip"')
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.serve_json(payload)
         except Exception as exc:  # pragma: no cover
             self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
 
@@ -1682,8 +1696,7 @@ class PLMappingHandler(BaseHTTPRequestHandler):
             raw_length = self.headers.get("Content-Length")
             if not raw_length:
                 raise ValueError("Missing content length")
-            length = int(raw_length)
-            payload = self.rfile.read(length)
+            payload = self.read_body(512 * 1024 * 1024)
             filename = self.headers.get("X-Filename", "uploaded.pkl")
             safe_name = Path(urllib.parse.unquote(filename)).name
             target = UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe_name}"
@@ -1699,6 +1712,17 @@ class PLMappingHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
 
 
+def create_server(host: str, port: int) -> ThreadingHTTPServer:
+    import errno
+    for candidate in ([0] if port == 0 else range(port, min(port + 20, 65536))):
+        try:
+            return ThreadingHTTPServer((host, candidate), PLMappingHandler)
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+    raise OSError("No free port found. Start with --port 0 to choose an available port.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Standalone PL mapping viewer")
     parser.add_argument("--host", default="127.0.0.1")
@@ -1708,7 +1732,8 @@ def main() -> None:
 
     ensure_pandas_available()
 
-    server = ThreadingHTTPServer((args.host, args.port), PLMappingHandler)
+    server = create_server(args.host, args.port)
+    args.port = server.server_port
     print(f"Serving PL mapping viewer on http://{args.host}:{args.port}")
     if DATA_DIR.exists():
         print(f"Dataset: {DATA_DIR}")

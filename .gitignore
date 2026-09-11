@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.build-venv*/
+build/
+dist/
+release/
+*.spec
+analysis_outputs/
+converted_pickles/
+TMM-simulator-for-near-field/
