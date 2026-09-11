@@ -55,3 +55,15 @@ Tests use temporary paths and synthetic data; user measurements were not changed
   tree. Binary HTTPS update lookup succeeded with bundled certificate roots. Upload,
   missing-value map, full CSV ZIP and session/upload preservation across restart passed.
 - No Windows or Intel Mac validation was performed.
+
+## 0.3.2 macOS packaging — 2026-09-11
+
+- Python regression suite: 22 passed; Node processing and update-message tests passed.
+- Built macOS arm64 one-file console executable; codesign --verify --strict passed
+  (ad-hoc signature only; this is not Developer ID signing/notarization).
+- Extracted ZIP outside source: exactly executable, launcher, guide and version file;
+  no loose _internal libraries. Launch, synthetic upload, missing-value map, full-resolution
+  export, live HTTPS update lookup, restart/session/upload persistence passed.
+- Previous local package checks did not reproduce browser-download quarantine. User
+  reported v0.3.1 _internal/Python blocked by macOS. Packaging now follows TMM onefile,
+  but clean-Mac downloaded Gatekeeper approval count remains unverified. Windows not tested.

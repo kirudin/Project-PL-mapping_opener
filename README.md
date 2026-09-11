@@ -1,6 +1,6 @@
 # PL Mapping Viewer
 
-Version: 0.3.1 — 2026-09-11
+Version: 0.3.2 — 2026-09-11
 
 Local PL map and spectrum analysis. This release establishes a shared macOS/Windows
 source and corrects data/export/session behavior before extending analysis features.
@@ -69,3 +69,13 @@ See [DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md), [docs/VALIDATION.md](docs/VALI
 [CHANGELOG.md](CHANGELOG.md), and [docs/LEGACY_VERSIONS.md](docs/LEGACY_VERSIONS.md).
 
 Update settings are stored per browser origin; lookup cache is in app-data/update-cache.json. Only public GitHub release metadata is requested; measurements and session contents are never sent.
+
+### macOS 0.3.2 packaging fix
+
+Download the v0.3.2 macOS arm64 ZIP and extract into a fresh folder, then run
+`Launch PL Mapping Viewer.command`. Do not merge it with an older `_internal` folder.
+Python and native libraries are embedded in one executable, matching the TMM console
+build approach. macOS builds are ad-hoc signed, not Developer ID signed or notarized:
+initial macOS approval can still be required. Browser-download Gatekeeper behavior
+has not been verified on a clean Mac. No security settings are changed by the launcher.
+Saved sessions/uploads remain in the existing application data folder.

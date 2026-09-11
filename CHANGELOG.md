@@ -6,6 +6,14 @@
   in the existing public repository at the user's request.
 - Existing binary releases and their historical tags remain unchanged.
 
+## 0.3.2 — 2026-09-11
+
+- macOS now uses a one-file console executable, matching TMM packaging, instead of
+  distributing individually quarantined Python/framework libraries in `_internal`.
+- Stage release contents separately from build output and verify the macOS executable signature.
+- This is an ad-hoc signed build, not an Apple-notarized release. Clean downloaded
+  Gatekeeper launch remains unverified. Numerical behavior is unchanged.
+
 ## 0.3.1 — 2026-09-11
 
 - Daily and manual GitHub release checks, optional preview channel, and clickable release page.

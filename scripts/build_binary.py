@@ -14,13 +14,22 @@ import ast
 version = next(ast.literal_eval(n.value) for n in ast.parse((ROOT / "runtime_paths.py").read_text()).body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "APP_VERSION" for t in n.targets))
 name = "PL-Mapping-Viewer"
 def main():
-    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--console", "--name", name,
-               "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build/pyinstaller"), "--specpath", str(ROOT / "build"),
+    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile" if sys.platform == "darwin" else "--onedir", "--console", "--name", name,
+               "--distpath", str(ROOT / "dist" / platform.system()), "--workpath", str(ROOT / "build/pyinstaller"), "--specpath", str(ROOT / "build"),
                "--add-data", str(ROOT / "pl_mapping_static") + (";" if sys.platform == "win32" else ":") + "pl_mapping_static",
                "--exclude-module", "matplotlib", "--exclude-module", "scipy", "--exclude-module", "IPython", "--exclude-module", "tkinter",
                str(ROOT / "pl_mapping_viewer.py")]
     subprocess.run(command, cwd=ROOT, check=True)
-    package = ROOT / "dist" / name
+    built = ROOT / "dist" / platform.system() / name
+    package = ROOT / "build" / "release_staging" / name
+    if package.exists():
+        shutil.rmtree(package)
+    if sys.platform == "darwin":
+        package.mkdir(parents=True)
+        shutil.copy2(built, package / name)
+        subprocess.run(["codesign", "--verify", "--strict", str(package / name)], check=True)
+    else:
+        shutil.copytree(built, package)
     for document in ("USER_GUIDE.txt",):
         shutil.copy2(ROOT / document, package / document)
     (package / "VERSION.txt").write_text(version + "\n")
