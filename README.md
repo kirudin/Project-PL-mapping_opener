@@ -1,6 +1,6 @@
 # PL Mapping Viewer
 
-Version: 0.3.3 — 2026-09-11
+Version: 0.3.4 — 2026-09-11
 
 Local PL map and spectrum analysis. This release establishes a shared macOS/Windows
 source and corrects data/export/session behavior before extending analysis features.

@@ -6,6 +6,15 @@
   in the existing public repository at the user's request.
 - Existing binary releases and their historical tags remain unchanged.
 
+## 0.3.4 — 2026-09-11
+
+- Keep pixel recommendation metadata when opening and restoring a file; reopening
+  Import Setup no longer loses suggestions and factor candidates.
+- Refresh an already-open import dialog after asynchronous session restoration.
+- Show file upload/analysis progress and errors inside the import dialog, prevent
+  duplicate imports while busy, and display HTTP error messages without raw HTML.
+- Add regressions for recommendation retention and visible/recoverable import failures.
+
 ## 0.3.3 — 2026-09-11
 
 - Include NumPy 1.x compatibility modules in frozen builds so existing pickle files

@@ -7,7 +7,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 def data_home() -> Path:
     if os.environ.get("PL_MAPPING_DATA_HOME"):
         return Path(os.environ["PL_MAPPING_DATA_HOME"]).expanduser().resolve()

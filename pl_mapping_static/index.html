@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PL Mapping Viewer</title>
-    <link rel="stylesheet" href="/styles.css?v=0.3.3" />
+    <link rel="stylesheet" href="/styles.css?v=0.3.4" />
   </head>
   <body>
     <div class="shell">
@@ -12,7 +12,7 @@
         <div class="panel">
           <h1>PL Mapping Viewer</h1>
           <p class="meta-line">Creator: Hwi Je Woo</p>
-          <p class="meta-line">Version: 0.3.3</p>
+          <p class="meta-line">Version: 0.3.4</p>
           <p class="meta-line">Created: 2026-03-10 KST</p>
           <section class="update-panel" aria-label="Application updates">
             <button id="check-updates" type="button">Check for updates</button>
@@ -440,6 +440,8 @@
             </div>
           </div>
 
+          <p id="import-error" class="error-text" role="alert" hidden></p>
+          <p id="import-progress" class="muted" role="status" hidden></p>
           <div class="modal-summary">
             <strong id="import-modal-file">No file selected</strong>
             <p id="import-modal-meta" class="muted">Choose a file to start the analysis.</p>
@@ -491,8 +493,8 @@
       </div>
     </div>
 
-    <script src="/updates.js?v=0.3.3"></script>
-    <script src="/processing.js?v=0.3.3"></script>
-    <script src="/app.js?v=0.3.3"></script>
+    <script src="/updates.js?v=0.3.4"></script>
+    <script src="/processing.js?v=0.3.4"></script>
+    <script src="/app.js?v=0.3.4"></script>
   </body>
 </html>

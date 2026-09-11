@@ -81,3 +81,18 @@ Tests use temporary paths and synthetic data; user measurements were not changed
   filename. Browser page version 0.3.3 loaded; Finder file-picker interaction not repeated.
 - macOS onefile packaging retained; Apple notarization and clean downloaded Gatekeeper
   behavior remain unverified. Windows remains untested.
+
+## 0.3.4 interactive import investigation — 2026-09-11
+
+- Tested the published 0.3.3 executable through the browser file chooser with local
+  80x80 DataFrame and 150x50 viewer-ready pickles. Initial recommendations and maps worked.
+- Reproduced missing suggestions/candidates when reopening Import Setup after opening
+  a file: file-info had replaced file-analysis state. Fixed by obtaining analysis metadata.
+- Also reproduced a blank import modal when opened during asynchronous session restore.
+  The modal now refreshes when restore completes, and indicates restoration in progress.
+- Added visible upload/analysis progress and error messages inside the modal. Verified
+  a synthetic corrupt pickle reports its load error in the dialog and permits retry.
+- Node import-feedback regression tests cover preserved recommendations and failure
+  recovery. Python suite 23 passed; processing/update Node suites passed.
+- These findings do not identify the user's exact failing file, whose path/version
+  has not been provided. Do not claim every pickle or their specific failure is resolved.

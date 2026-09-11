@@ -175,18 +175,37 @@ const els = {
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const body = await response.text();
+    let message = body;
+    if (response.headers.get("content-type")?.includes("text/html")) {
+      const page = new DOMParser().parseFromString(body, "text/html");
+      message = Array.from(page.querySelectorAll("p")).map(p => p.textContent)
+        .find(text => text.startsWith("Message:"))?.replace(/^Message:\s*/, "") || `HTTP ${response.status}`;
+    }
+    throw new Error(message || `HTTP ${response.status}`);
+  }
   return response.json();
 }
 
 function showError(message) {
   els.appError.hidden = false;
   els.appError.textContent = String(message);
+  const modalError = document.getElementById("import-error");
+  if (modalError) {
+    modalError.hidden = false;
+    modalError.textContent = String(message);
+  }
 }
 
 function clearError() {
   els.appError.hidden = true;
   els.appError.textContent = "";
+  const modalError = document.getElementById("import-error");
+  if (modalError) {
+    modalError.hidden = true;
+    modalError.textContent = "";
+  }
 }
 
 function formatNumber(value, digits = 2) {
@@ -332,7 +351,7 @@ function sessionSnapshot() {
   return {
     schema_version: 3,
     saved_at_ms: Date.now(),
-    app_version: "0.3.3",
+    app_version: "0.3.4",
     clickedTraces: state.clickedTraces,
     selectedPath: state.selectedPath,
     selectedFile: state.selectedFile,
@@ -1634,6 +1653,7 @@ function openImportModal(analysis) {
   els.importModal.hidden = false;
   if (!analysis) {
     resetImportModalView();
+    if (state.restoring) els.importModalMeta.textContent = "Restoring the previous file and pixel dimensions…";
     return;
   }
   els.importModalFile.textContent = analysis.name || "Selected file";
@@ -1699,7 +1719,7 @@ async function refreshSelectedFileFromImportSettings(resetSelection = false, opt
   if (!state.selectedPath) return;
   const info = await fetchJson(buildFileInfoRequest(state.selectedPath, options));
   state.selectedFile = info;
-  state.fileAnalysis = info;
+  state.fileAnalysis = await fetchFileAnalysis(state.selectedPath);
   const dims = getGridDimensions();
   state.gridWidth = dims?.width ?? (info.requires_manual_dimensions ? null : info.width);
   state.gridHeight = dims?.height ?? (info.requires_manual_dimensions ? null : info.height);
@@ -1741,7 +1761,7 @@ function tracesToCsv(bundles, kind = "processed-clicked") {
   const lineOnly = bundles.every((bundle) => bundle.groupType === "line");
   const length = bundles[0].x.length;
   const header = [`${currentAxisLabel()} (${currentAxisUnit()})`, ...bundles.map((bundle) => bundle.exportLabel || bundle.label)];
-  const metadata = {app_version: "0.3.3", kind, source: state.selectedFile?.name, source_signature: state.selectedFile?.source_signature, unit: currentAxisUnit(), missing: "empty cell", processing: kind === "raw-mean" ? [] : {reference: els.referenceToggle.checked ? els.referenceSelect.value : null, reference_offset: Number(els.referenceOffset.value), invalid_reference: "abs(denominator)<1e-12 or missing -> missing", smoothing: els.smoothToggle.checked ? {window: Number(els.smoothWindow.value), polynomial: Number(els.smoothPoly.value), domain: "channel index"} : null, normalization: els.normalizeToggle.checked ? "min-max" : null, display_offset: false}, selections: kind === "raw-mean" ? [] : state.clickedTraces.map(({x,y,...meta}) => meta)};
+  const metadata = {app_version: "0.3.4", kind, source: state.selectedFile?.name, source_signature: state.selectedFile?.source_signature, unit: currentAxisUnit(), missing: "empty cell", processing: kind === "raw-mean" ? [] : {reference: els.referenceToggle.checked ? els.referenceSelect.value : null, reference_offset: Number(els.referenceOffset.value), invalid_reference: "abs(denominator)<1e-12 or missing -> missing", smoothing: els.smoothToggle.checked ? {window: Number(els.smoothWindow.value), polynomial: Number(els.smoothPoly.value), domain: "channel index"} : null, normalization: els.normalizeToggle.checked ? "min-max" : null, display_offset: false}, selections: kind === "raw-mean" ? [] : state.clickedTraces.map(({x,y,...meta}) => meta)};
   const rows = ["# " + JSON.stringify(metadata), header.map(csvEscape).join(",")];
   if (lineOnly) {
     rows.push(["pixel_coordinate", ...bundles.map((bundle) => `(${bundle.pixelX}, ${bundle.pixelY})`)].map(csvEscape).join(","));
@@ -2477,6 +2497,15 @@ async function selectMeanPointFromEvent(event) {
 }
 
 async function uploadPickedFile(file) {
+  if (state.fileImportBusy) return;
+  state.fileImportBusy = true;
+  const progress = document.getElementById("import-progress");
+  const controls = [els.pickFileInput, els.modalPickFileInput, els.useSuggestedDims, els.importModalOpenButton];
+  controls.forEach(control => { control.disabled = true; });
+  const reportProgress = message => {
+    if (progress) { progress.hidden = false; progress.textContent = message; }
+  };
+  reportProgress(`Uploading ${file.name}…`);
   try {
     clearError();
     await applyLearnedImportPreset(file);
@@ -2488,8 +2517,10 @@ async function uploadPickedFile(file) {
       },
       body: file,
     });
+    reportProgress(`Reading ${file.name} and calculating pixel dimensions… The first file can take longer.`);
     state.selectedPath = uploaded.path;
     state.fileAnalysis = null;
+    updateModalValidation();
     state.selectedFile = null;
     state.clickedTraces = [];
     state.hoverGuide = null;
@@ -2519,6 +2550,10 @@ async function uploadPickedFile(file) {
   } catch (error) {
     showError(`File open failed:\n${error}`);
     console.error(error);
+  } finally {
+    state.fileImportBusy = false;
+    controls.forEach(control => { control.disabled = false; });
+    if (progress) { progress.hidden = true; progress.textContent = ""; }
   }
 }
 
@@ -2581,7 +2616,7 @@ async function restorePreviousSession(provided = null) {
     updateClickedViewControls();
     try {
       state.selectedFile = await fetchJson(buildFileInfoRequest(state.selectedPath));
-      state.fileAnalysis = state.selectedFile;
+      state.fileAnalysis = await fetchFileAnalysis(state.selectedPath);
     } catch (error) {
       if (!state.selectedFile) throw error;
       showError(`Last file could not be reopened automatically:\n${error}`);
@@ -2619,6 +2654,7 @@ async function restorePreviousSession(provided = null) {
     showError(`Previous session could not be restored:\n${error}`);
   } finally {
     state.restoring = false;
+    if (state.importModalOpen && !state.fileImportBusy) openImportModal(state.fileAnalysis);
   }
 }
 
@@ -2785,7 +2821,16 @@ function bindEvents() {
       url.pathname = "/api/pl-image-export";
       url.searchParams.set("source_signature", preview.source_signature);
       const response = await fetch(url);
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) {
+    const body = await response.text();
+    let message = body;
+    if (response.headers.get("content-type")?.includes("text/html")) {
+      const page = new DOMParser().parseFromString(body, "text/html");
+      message = Array.from(page.querySelectorAll("p")).map(p => p.textContent)
+        .find(text => text.startsWith("Message:"))?.replace(/^Message:\s*/, "") || `HTTP ${response.status}`;
+    }
+    throw new Error(message || `HTTP ${response.status}`);
+  }
       exportBlob(await response.blob(), `${baseFileName(preview.source_name, "pl-map")}-full-map.zip`);
     } catch (error) { showError(`Export failed: ${error.message}`); }
   });

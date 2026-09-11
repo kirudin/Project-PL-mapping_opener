@@ -1,4 +1,4 @@
-# Developer handoff — 0.3.3
+# Developer handoff — 0.3.4
 
 ## Scope and source
 
@@ -57,3 +57,5 @@ Frozen pickle support requires numpy.core compatibility modules even though curr
 NumPy imports numpy._core. Run tests/smoke_binary_pickle.py against release binaries;
 NPZ-only smoke tests do not cover pickle's dynamic imports. Never text-parse failed
 .pickle/.pkl inputs. First pandas initialization can take several seconds.
+
+Keep state.fileAnalysis from /api/file-analysis: /api/file-info does not contain the suggested dimensions or factor candidates. File import errors must be visible inside the modal. Run node tests/test_import_feedback.cjs after changing this workflow.
