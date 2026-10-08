@@ -1,6 +1,6 @@
 # PL Mapping Viewer
 
-Version: 0.4.0 — 2026-09-11
+Version: 0.5.0 — 2026-10-08
 
 Local PL map and spectrum analysis. This release establishes a shared macOS/Windows
 source and corrects data/export/session behavior before extending analysis features.
@@ -19,6 +19,7 @@ Python 3.10+; install `python3 -m pip install -r requirements.txt` in a virtual 
 
 Open Data File → choose file → confirm dimensions → select a wavelength/range →
 select points or lines → inspect spectra or heatmap → export / save session.
+WITec `.wip` projects open through the same file picker. Choose a spectral map when several are present; pixel dimensions come from the project. The original file is preserved.
 Read [USER_GUIDE.txt](USER_GUIDE.txt) for input conventions, missing values, and export semantics.
 
 ## Build on the target OS

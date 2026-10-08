@@ -65,3 +65,5 @@ original nm; fetchJson converts analysis/image/trace response coordinates and
 buildImageRequest inverses display selections. Never reorder intensity without its
 coordinate; no density Jacobian is applied. Session spectralSettings identifies stored
 trace/selection coordinate units. Tests: node tests/test_spectral_units.cjs.
+
+WIP import: wip_import.py validates tag boundaries and uses pinned witio 0.2.0 for graph/axis decoding. GET /api/wip-maps enumerates spectral maps; POST /api/wip-import extracts only the chosen map into a persistent derived NPZ. The browser then uses the existing analysis/image/trace APIs. Never infer nm from an uncalibrated WIP axis. tests/test_wip.py creates small binary fixtures; tests/smoke_binary_wip.py tests the frozen executable (optional real file argument).

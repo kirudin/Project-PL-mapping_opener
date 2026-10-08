@@ -98,3 +98,12 @@ macOS v0.3.2 실행 오류 수정
 - 강도는 측정 채널당 값을 유지하며 스펙트럼 밀도 변환은 하지 않습니다.
 - 이미지 폭 비율과 높이 입력 또는 이미지 프레임 아래쪽 조절점으로 크기를 변경합니다.
 - 테마 변경 시 그래프 기본 색상과 배경이 함께 바뀌며 이후 개별 조절도 가능합니다.
+
+WITec .wip projects (v0.5.0)
+Open Data File → select .wip → choose a mapping dataset → Load selected map → Apply and Open.
+A single map is selected automatically. Lists show names, X×Y pixels and channel counts.
+Only spectral maps/line scans are listed, not single spectra or camera/processed scalar images.
+Original projects stay unchanged. Selected maps are stored as local NPZ copies for session restore.
+Calibrated axes are imported in nm and work with the existing display-unit controls.
+Without calibration, channel indices are shown. Raman display conversion requires the excitation wavelength.
+Invalid or unsupported project structures report an error; no attempt is made to repair original files.

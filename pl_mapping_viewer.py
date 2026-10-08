@@ -20,6 +20,7 @@ import zipfile
 import os
 from pl_core import finite_mean, GridPreview, build_line_band_points, clamp_line_thickness, downsample_grid, finite_min_max, get_line_pixels, nan_safe_list
 from update_checker import check_updates
+from wip_import import list_maps, import_map
 from runtime_paths import APP_VERSION, DATA_HOME, UPLOAD_DIR, LEGACY_UPLOAD_DIR, load_session, save_session
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -574,6 +575,8 @@ def extract_dimension_hints(loaded: object) -> tuple[int | None, int | None]:
 
 def load_mapping_source(path: Path, options: ImportOptions | None = None) -> object:
     suffix = path.suffix.lower()
+    if suffix == ".wip":
+        raise ValueError("Open the WIP project with Select File, then choose a mapping dataset.")
 
     def tokenize_text_row(line: str) -> list[str]:
         return tokenize_delimited_line(line, options.delimiter if options else "auto")
@@ -765,6 +768,9 @@ def load_mapping_analysis(
         data_start_column,
     )
     frame = load_mapping_source(source, import_options)
+    provenance = None
+    if isinstance(frame, dict) and "wip_provenance" in frame:
+        provenance = json.loads(str(frame["wip_provenance"]))
     hint_width, hint_height = extract_dimension_hints(frame)
     embedded_width = hint_width if hint_width and hint_height and hint_width * hint_height > 0 else None
     embedded_height = hint_height if hint_width and hint_height and hint_width * hint_height > 0 else None
@@ -795,7 +801,8 @@ def load_mapping_analysis(
 
     mean_trace = nan_safe_list(finite_mean(matrix, axis=1))
     return {
-        "name": source.name,
+        "name": (f"{UPLOAD_PREFIX_RE.sub('', provenance['source_file'])} / {provenance['dataset']['name']}" if provenance else source.name),
+        "wip_provenance": provenance,
         "inferred_width": inferred_width,
         "inferred_height": inferred_height,
         "requires_manual_dimensions": requires_manual_dimensions,
@@ -887,6 +894,7 @@ def build_file_summary() -> dict:
                 "max_wavelength": payload["max_wavelength"],
                 "size_bytes": payload["size_bytes"],
         "source_signature": payload["source_signature"],
+        "wip_provenance": payload.get("wip_provenance"),
         "missing_count": payload["missing_count"],
             }
         )
@@ -955,6 +963,7 @@ def build_file_info(
         "max_wavelength": payload["max_wavelength"],
         "size_bytes": payload["size_bytes"],
         "source_signature": payload["source_signature"],
+        "wip_provenance": payload.get("wip_provenance"),
         "missing_count": payload["missing_count"],
         "wavelength_unit": payload["wavelength_unit"],
         "wavelength_axis_label": payload["wavelength_axis_label"],
@@ -994,6 +1003,7 @@ def build_file_analysis(
         "slice_count": payload["slice_count"],
         "size_bytes": payload["size_bytes"],
         "source_signature": payload["source_signature"],
+        "wip_provenance": payload.get("wip_provenance"),
         "missing_count": payload["missing_count"],
         "min_wavelength": payload["min_wavelength"],
         "max_wavelength": payload["max_wavelength"],
@@ -1098,6 +1108,7 @@ def parse_pl_image(
     return {
         "app_version": APP_VERSION,
         "source_signature": payload["source_signature"],
+        "wip_provenance": payload.get("wip_provenance"),
         "source_name": payload["name"],
         "missing_policy": "nonfinite -> null; aggregates ignore missing; all-missing -> null",
         "axis_unit_note": "Numeric spectral axes are interpreted as nm; verify source units before import.",
@@ -1314,6 +1325,17 @@ class PLMappingHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.send_error(400, str(exc))
             return
+        if parsed.path == "/api/wip-import":
+            try:
+                body = json.loads(self.read_body(64 * 1024))
+                path = resolve_pickle_path(body.get("path"))
+                key = body.get("key")
+                if type(key) is not int:
+                    raise ValueError("Choose a mapping dataset.")
+                self.serve_json(import_map(path, key, UPLOAD_DIR))
+            except Exception as exc:
+                self.send_error(400, str(exc))
+            return
         if parsed.path == "/api/upload-pickle":
             self.serve_upload_pickle()
             return
@@ -1354,6 +1376,13 @@ class PLMappingHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/files":
             self.serve_json(build_file_summary())
+            return
+        if route == "/api/wip-maps":
+            try:
+                path = resolve_pickle_path(params.get("path", [None])[0])
+                self.serve_json(list_maps(path))
+            except Exception as exc:
+                self.send_error(400, str(exc))
             return
         if route == "/api/file-analysis":
             self.serve_file_analysis(

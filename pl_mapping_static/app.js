@@ -2550,28 +2550,7 @@ async function selectMeanPointFromEvent(event) {
   writeStoredState();
 }
 
-async function uploadPickedFile(file) {
-  if (state.fileImportBusy) return;
-  state.fileImportBusy = true;
-  const progress = document.getElementById("import-progress");
-  const controls = [els.pickFileInput, els.modalPickFileInput, els.useSuggestedDims, els.importModalOpenButton];
-  controls.forEach(control => { control.disabled = true; });
-  const reportProgress = message => {
-    if (progress) { progress.hidden = false; progress.textContent = message; }
-  };
-  reportProgress(`Uploading ${file.name}…`);
-  try {
-    clearError();
-    await applyLearnedImportPreset(file);
-    const uploaded = await fetchJson("/api/upload-pickle", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-Filename": encodeURIComponent(file.name),
-      },
-      body: file,
-    });
-    reportProgress(`Reading ${file.name} and calculating pixel dimensions… The first file can take longer.`);
+async function analyzeUploadedMapping(uploaded) {
     state.selectedPath = uploaded.path;
     state.fileAnalysis = null;
     updateModalValidation();
@@ -2601,6 +2580,95 @@ async function uploadPickedFile(file) {
         throw error;
       }
     }
+}
+
+async function importSelectedWipMap() {
+  const result = await fetchJson("/api/wip-import", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({path: state.wipProjectPath, key: Number(document.getElementById("wip-map-select").value)}),
+  });
+  applyImportSettings({importMode: "auto"});
+  document.getElementById("wip-map-status").textContent = result.warning || `Loaded ${result.name}`;
+  return result;
+}
+
+document.getElementById("wip-map-select").addEventListener("change", () => {
+  state.fileAnalysis = null;
+  updateModalValidation();
+  document.getElementById("wip-map-status").textContent = "Load the selected map to calculate its pixel dimensions.";
+});
+
+document.getElementById("wip-map-open").addEventListener("click", async () => {
+  if (state.fileImportBusy) return;
+  state.fileImportBusy = true;
+  const button = document.getElementById("wip-map-open");
+  button.disabled = true;
+  const select = document.getElementById("wip-map-select");
+  select.disabled = true;
+  els.useSuggestedDims.disabled = els.importModalOpenButton.disabled = true;
+  els.pickFileInput.disabled = els.modalPickFileInput.disabled = true;
+  try {
+    clearError();
+    document.getElementById("wip-map-status").textContent = "Reading selected map…";
+    await analyzeUploadedMapping(await importSelectedWipMap());
+  } catch (error) {
+    showError(`WIP map open failed: ${error}`);
+  } finally {
+    state.fileImportBusy = false;
+    button.disabled = false;
+    select.disabled = false;
+    els.useSuggestedDims.disabled = els.importModalOpenButton.disabled = false;
+    els.pickFileInput.disabled = els.modalPickFileInput.disabled = false;
+  }
+});
+
+async function uploadPickedFile(file) {
+  if (state.fileImportBusy) return;
+  state.fileImportBusy = true;
+  const progress = document.getElementById("import-progress");
+  const controls = [els.pickFileInput, els.modalPickFileInput, els.useSuggestedDims, els.importModalOpenButton];
+  controls.forEach(control => { control.disabled = true; });
+  const reportProgress = message => {
+    if (progress) { progress.hidden = false; progress.textContent = message; }
+  };
+  reportProgress(`Uploading ${file.name}…`);
+  try {
+    clearError();
+    if (!/\.wip$/i.test(file.name)) await applyLearnedImportPreset(file);
+    let uploaded = await fetchJson("/api/upload-pickle", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": encodeURIComponent(file.name),
+      },
+      body: file,
+    });
+    const picker = document.getElementById("wip-map-picker");
+    picker.hidden = true;
+    if (/\.wip$/i.test(file.name)) {
+      state.fileAnalysis = null;
+      updateModalValidation();
+      reportProgress("Finding spectral maps in WIP project…");
+      const listing = await fetchJson(`/api/wip-maps?path=${encodeURIComponent(uploaded.path)}`);
+      if (!listing.maps.length) throw new Error("No spectral mapping data found in this WIP project. Single spectra and camera images are not spectral maps.");
+      state.wipProjectPath = uploaded.path;
+      const select = document.getElementById("wip-map-select");
+      select.replaceChildren(...listing.maps.map(map => {
+        const option = document.createElement("option");
+        option.value = map.key;
+        option.textContent = `${map.name} — ${map.width} × ${map.height} pixels, ${map.channels} channels`;
+        return option;
+      }));
+      picker.hidden = false;
+      document.getElementById("wip-map-status").textContent = `${listing.maps.length} map(s) found. ${listing.skipped.length ? listing.skipped.length + ' unreadable entries skipped.' : ''}`;
+      if (listing.maps.length > 1) {
+        select.focus();
+        return;
+      }
+      uploaded = await importSelectedWipMap();
+    }
+    reportProgress(`Reading ${file.name} and calculating pixel dimensions… The first file can take longer.`);
+    await analyzeUploadedMapping(uploaded);
   } catch (error) {
     showError(`File open failed:\n${error}`);
     console.error(error);

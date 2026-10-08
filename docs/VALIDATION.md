@@ -111,3 +111,13 @@ Tests use temporary paths and synthetic data; user measurements were not changed
 - Browser viewport controls are scaled in this environment: measured CSS widths 2149
   and 1014 px showed two columns and one column respectively, without document overflow.
 - No Windows build or clean-download Gatekeeper verification; macOS remains ad-hoc signed.
+
+## 0.5.0 WIP import — 2026-10-08
+
+Synthetic binary WIT-tag fixtures cover multiple/single/no maps, index-only axes, invalid offsets, pixel orientation, nm calibration, and NaN preservation.
+Local measured sample1.wip enumerated three spectral maps (60×60, 150×150, 150×150; 1600 channels each). All imported into the existing analysis pipeline with matching corner/interior spectra and embedded pixel recommendations.
+Local sample2.wip failed tag validation at byte 37670 (invalid data offsets); not treated as a valid import or automatically repaired. Measurement files are not part of the repository or release.
+
+Browser checks on macOS Chromium: uploaded the measured sample, selected/opened all three maps, converted the displayed axis to eV, reloaded/restored the chosen map, and confirmed the invalid-project error. No JavaScript page errors observed.
+Python: 26 tests passed. All four Node regression scripts passed. Packaged macOS arm64 executable: synthetic WIP enumeration/import/image/spectrum/provenance ZIP smoke passed; legacy NumPy and pandas pickle smoke passed. Windows executable has not been validated.
+The frozen macOS executable also passed the optional real-file smoke for all three sample1.wip maps, including spectrum extraction and provenance-bearing image export.

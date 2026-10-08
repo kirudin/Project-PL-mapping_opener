@@ -1,3 +1,10 @@
+## 0.5.0 — WITec project mapping import
+
+- Open `.wip` files directly; choose spectral maps by name, pixel dimensions and channel count.
+- Preserve calibrated wavelength axes, missing values and x-fastest pixel order in a derived local NPZ; source projects remain unchanged.
+- Include WIP dataset provenance in metadata. Uncalibrated maps use channel indices; invalid tag offsets fail with a readable error.
+- macOS validation: one measured project containing three maps; a second sample was rejected for invalid internal offsets. This does not establish compatibility with all WITec versions.
+
 # Changelog
 
 ## Source publication — 2026-09-11

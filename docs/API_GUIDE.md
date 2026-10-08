@@ -28,3 +28,9 @@ Session JSON includes source metadata, input settings, display settings and sele
 snapshots with line groups/thickness/distances. It references the raw file; it does not bundle it.
 
 - GET /api/update-check?force=0|1&preview=0|1: public release metadata; JSON status ok/no_release/unavailable, update_available, current/latest_version, release_url, checked_at, cached, stale. Default preview=1. Failure returns HTTP 200 with unavailable status so analysis remains independent. This call contacts GitHub only when cache policy permits. No files are uploaded.
+
+WIP import (0.5.0):
+- GET /api/wip-maps?path=...: enumerate TDGraph spectral maps without decoding every cube; maps have key (project-entry index), name, width, height, channels. skipped reports unreadable graph descriptors.
+- POST /api/wip-import: JSON {path, key}; returns {path, name, warning} for a derived NPZ under app-data/uploads. Uses the same path restrictions and write-origin checks as other imports.
+- Derived NPZ stores matrix[channel, y*width+x], explicit width/height, calibrated wavelengths when available, and wip_provenance JSON. No interpolation/intensity conversion. WIP provenance is included in file/image metadata and image ZIP exports.
+- Reader: pinned MIT-0 witio 0.2.0 with local tag-boundary validation. Project cache holds at most one parsed project and invalidates on size/mtime changes.
